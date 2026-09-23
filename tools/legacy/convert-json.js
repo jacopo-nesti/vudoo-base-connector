@@ -1,4 +1,4 @@
-import { convertXmlToJson } from './src/converter.js';
+import { convertXmlToJson } from './xml-to-json.js';
 
 convertXmlToJson().catch(error => {
   console.error(`ERROR conversione XML: ${error.message}`);

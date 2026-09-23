@@ -1,7 +1,6 @@
-import { token, testMode, dryRun } from './config.js';
+import { token, testMode, dryRun, getBaseApiRequestsPerMinute } from './config.js';
 import { log } from './logger.js';
 import { getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi.js';
-import { getProducts, detectAndFilterDuplicates } from './products.js';
 
 export async function runEnvironmentCheck() {
   log('========================================');
@@ -29,26 +28,13 @@ export async function runEnvironmentCheck() {
   const validDryRun = ['true', 'false'].includes(dryRun);
   report('DRY_RUN', validDryRun, `${dryRun} (valido: true/false)`);
 
-  // 2. Presenza e validazione real_products.json
-  let products = null;
   try {
-    products = await getProducts();
-    report('File real_products.json', true, `${products.length} prodotti letti`);
+    report('Rate limiter Base.com', true, `${getBaseApiRequestsPerMinute()} richieste/minuto`);
   } catch (error) {
-    report('File real_products.json', false, error.message);
+    report('Rate limiter Base.com', false, error.message);
   }
 
-  // 3. Struttura e controllo duplicati sul JSON
-  if (products) {
-    try {
-      const { uniqueProducts, feedDuplicates } = detectAndFilterDuplicates(products);
-      report('Struttura JSON e Duplicati', true, `${uniqueProducts.length} unici, ${feedDuplicates} duplicati nel feed`);
-    } catch (error) {
-      report('Struttura JSON e Duplicati', false, error.message);
-    }
-  }
-
-  // 4. Connessione API Base.com, Inventory, Price Group e Warehouse
+  // 2. Connessione API Base.com, Inventory, Price Group e Warehouse
   if (token && validTestMode && validDryRun) {
     try {
       const inventory = await getBaseInventory();

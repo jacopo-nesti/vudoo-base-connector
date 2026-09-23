@@ -1,12 +1,12 @@
-import { token, testMode, dryRun } from './src/config.js';
-import { log } from './src/logger.js';
-import { sendProductToBase, findProductInBase, getBaseProductDetails, updateProductInBase } from './src/baseApi.js';
-import { normalizeProduct, buildBasePayload, hasProductChanged } from './src/products.js';
-import { getManufacturerMap, ensureManufacturer } from './src/manufacturers.js';
-import { getCategoryMap, ensureCategoryPath } from './src/categories.js';
-import { runPreflightCheck } from './src/preflight.js';
+import { token, testMode, dryRun } from './config.js';
+import { log } from './logger.js';
+import { sendProductToBase, findProductInBase, getBaseProductDetails, updateProductInBase } from './baseApi.js';
+import { normalizeProduct, buildBasePayload, hasProductChanged, assertVudooSkuCompatibility } from './products.js';
+import { getManufacturerMap, ensureManufacturer } from './manufacturers.js';
+import { getCategoryMap, ensureCategoryPath } from './categories.js';
+import { runPreflightCheck } from './preflight.js';
 
-async function main() {
+export async function runImport(prepared) {
   log('[DEBUG] Avvio script');
 
   let config = {};
@@ -26,17 +26,18 @@ async function main() {
   // FASE PREFLIGHT: Esecuzione controlli preliminari
   let preflightData;
   try {
-    preflightData = await runPreflightCheck();
+    preflightData = prepared ?? await runPreflightCheck();
   } catch (error) {
     log(`ERROR [PREFLIGHT]: ${error.message}`);
     process.exitCode = 1;
-    return; // Interrompe il processo ed evita qualsiasi scrittura/elaborazione
+    return 1; // Interrompe il processo ed evita qualsiasi scrittura/elaborazione
   }
 
   // Assegnazione risorse già convalidate dal Preflight Check
   config.inventory = preflightData.inventory;
   config.priceGroup = preflightData.priceGroup;
   config.warehouse = preflightData.warehouse;
+  config.extraFields = preflightData.extraFields;
   feedDuplicates = preflightData.feedDuplicates;
 
   if (!config.warehouse) {
@@ -60,7 +61,7 @@ async function main() {
       processed++;
       log(`\nImportazione ${sourceProduct?.id ?? '(SKU assente)'}...`);
       try {
-        const product = normalizeProduct(sourceProduct);
+        const product = preflightData.normalizedProducts ? { ...sourceProduct } : normalizeProduct(sourceProduct);
         buildBasePayload(product, config);
 
         const existingProduct = await findProductInBase(product.sku, config.inventory.inventory_id);
@@ -71,6 +72,7 @@ async function main() {
         if (existingDetails && existingDetails.sku !== product.sku) {
           throw new Error('SKU del dettaglio Base.com non corrispondente.');
         }
+        if (existingDetails) assertVudooSkuCompatibility(product, existingDetails);
 
         const categoryId = await ensureCategoryPath(product.product_type, config.inventory.inventory_id, categoryMap);
         const manufacturerId = await ensureManufacturer(product.brand, mfgMap);
@@ -135,9 +137,5 @@ async function main() {
     if (uncertainSkus.length) log(`SKU con esito incerto: ${uncertainSkus.join(', ')}`);
     if (errors > 0 || uncertainSkus.length > 0) process.exitCode = 1;
   }
+  return errors > 0 || uncertainSkus.length > 0 ? 1 : 0;
 }
-
-main().catch(error => {
-  log(`ERROR: ${error.message}`);
-  process.exitCode = 1;
-});

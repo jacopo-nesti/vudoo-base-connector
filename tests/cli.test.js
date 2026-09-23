@@ -1,22 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { cp, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, rm, symlink, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 const root = process.cwd();
-const runtimeFiles = [
-  'cli.js',
-  'sync.js',
-  'index.js',
-  'check.js',
-  'convert_xml_to_json.js',
-  'productor.js',
-  'src',
-  'package.json',
-];
+const runtimeFiles = ['cli.js', 'check.js', 'src', 'tools', 'package.json'];
 
 const validXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:g="http://base.google.com/ns/1.0">
@@ -31,37 +22,14 @@ const validXml = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`;
 
-const sourceProducts = [
-  {
-    title: 'Prodotto test',
-    brand: 'Marca',
-    id: 'SKU-TEST',
-    price: '25,00 EUR',
-    availability: 'in stock',
-  },
-];
-
-async function createFixture({ invalidXml = false } = {}) {
+async function createFixture({ legacyCatalog = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'vudoo-cli-'));
-
   try {
     for (const file of runtimeFiles) {
       await cp(join(root, file), join(directory, file), { recursive: true });
     }
-
     await symlink(join(root, 'node_modules'), join(directory, 'node_modules'), 'junction');
-    await writeFile(join(directory, 'VUDOO.xml'), invalidXml ? '<rss>' : validXml, 'utf8');
-    await writeFile(
-      join(directory, 'real_products.json'),
-      JSON.stringify(sourceProducts, null, 2),
-      'utf8',
-    );
-    await writeFile(
-      join(directory, '.env'),
-      'BASE_API_TOKEN=test-only-token\nTEST_MODE=true\nDRY_RUN=true\n',
-      'utf8',
-    );
-
+    if (legacyCatalog) await writeFile(join(directory, 'VUDOO.xml'), validXml, 'utf8');
     return directory;
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
@@ -71,7 +39,6 @@ async function createFixture({ invalidXml = false } = {}) {
 
 async function withFixture(action, options) {
   const directory = await createFixture(options);
-
   try {
     return await action(directory);
   } finally {
@@ -89,13 +56,9 @@ function controlledEnvironment(extra = {}) {
     NODE_OPTIONS: `--import=${pathToFileURL(join(root, 'tests', 'mock-base.mjs')).href}`,
     ...extra,
   };
-
   for (const name of ['PATH', 'Path', 'SystemRoot', 'TEMP', 'TMP', 'ComSpec']) {
-    if (process.env[name] !== undefined) {
-      environment[name] = process.env[name];
-    }
+    if (process.env[name] !== undefined) environment[name] = process.env[name];
   }
-
   return environment;
 }
 
@@ -107,155 +70,134 @@ function runProcess(directory, entry, inputs = [], extraEnv = {}, timeoutMs = 10
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
-
     let output = '';
     let timedOut = false;
-
-    child.stdout.on('data', (chunk) => {
-      output += chunk;
-    });
-    child.stderr.on('data', (chunk) => {
-      output += chunk;
-    });
+    child.stdout.on('data', chunk => { output += chunk; });
+    child.stderr.on('data', chunk => { output += chunk; });
     child.on('error', reject);
-
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
     }, timeoutMs);
-
     child.on('close', (code, signal) => {
       clearTimeout(timeout);
-
       if (timedOut) {
-        reject(
-          new Error(
-            `${entry} non ha completato il workflow entro ${timeoutMs} ms. Output:\n${output}`,
-          ),
-        );
+        reject(new Error(`${entry} non ha completato il workflow entro ${timeoutMs} ms. Output:\n${output}`));
         return;
       }
-
       resolve({ code, signal, output });
     });
-
-    child.stdin.end(inputs.map((input) => `${input}\n`).join(''));
+    child.stdin.end(inputs.map(input => `${input}\n`).join(''));
   });
 }
 
-test('CLI: mostra il menu reale e uscita volontaria termina con codice 0', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'cli.js', ['7']);
-
-    assert.equal(result.code, 0);
+test('CLI: mostra il nuovo menu e uscita volontaria termina con codice 0', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['5']);
+    assert.equal(result.code, 0, result.output);
     assert.equal(result.signal, null);
-    assert.match(result.output, /1\. Converti XML/);
-    assert.match(result.output, /5\. Esegui flusso completo/);
-    assert.match(result.output, /7\. Esci/);
-    assert.doesNotMatch(result.output, /\[CONVERT\] Avvio/);
-    assert.doesNotMatch(result.output, /\[PREFLIGHT\] Avvio/);
+    assert.match(result.output, /0\. Verifica ambiente e configurazione/);
+    assert.match(result.output, /1\. Preflight catalogo Vudoo/);
+    assert.match(result.output, /2\. Sincronizza produttori da Vudoo/);
+    assert.match(result.output, /3\. Importa \/ aggiorna catalogo Vudoo/);
+    assert.match(result.output, /4\. Esegui test automatici/);
+    assert.match(result.output, /5\. Esci/);
+    assert.doesNotMatch(result.output, /Converti XML|flusso completo/);
   });
 });
 
-test('CLI: la voce 1 avvia realmente la conversione e poi consente di uscire', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'cli.js', ['1', '7']);
-
-    assert.equal(result.code, 0);
-    assert.match(result.output, /\[CONVERT\] Avvio conversione/);
-    assert.match(result.output, /XML:\s+1 item/);
-    assert.match(result.output, /\[CONVERT\] Conversione completata con successo/);
-    assert.doesNotMatch(result.output, /\[PREFLIGHT\] Avvio/);
+test('CLI: verifica ambiente senza cataloghi locali', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['0', '5']);
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /DIAGNOSTICA COMPLETATA CON SUCCESSO/);
+    assert.match(result.output, /Rate limiter Base\.com.*100 richieste\/minuto/);
+    assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
   });
 });
 
-test('CLI: la voce 2 avvia realmente il preflight', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'cli.js', ['2', '7']);
-
-    assert.equal(result.code, 0);
-    assert.match(result.output, /\[PREFLIGHT\] Avvio controlli preliminari/);
-    assert.match(result.output, /\[PREFLIGHT\] Controlli preliminari completati con successo/);
-    assert.doesNotMatch(result.output, /Payload addInventoryProduct/);
+test('CLI: preflight Vudoo usa il catalogo remoto mockato e non scrive', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['1', ' test-company ', '5'], { TEST_VUDOO_CODE: 'test-company' });
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /\[VUDOO\] Catalogo XML recuperato/);
+    assert.match(result.output, /\[PREFLIGHT\] Controlli preliminari completati/);
+    assert.match(result.output, /\[VUDOO\] Preflight completato/);
+    assert.doesNotMatch(result.output, /Payload Base\.com \(addInventoryProduct\)/);
+    assert.doesNotMatch(result.output, /test-company|real_products\.json|VUDOO\.xml/);
   });
 });
 
-test('CLI: il sottomenu usa la voce 2 per continuare con l’import', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'cli.js', ['1', '2', '7']);
+test('CLI: sincronizzazione produttori usa il catalogo remoto mockato', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['2', 'test-company', '5'], { TEST_VUDOO_CODE: 'test-company' });
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /\[VUDOO\] Catalogo validato/);
+    assert.match(result.output, /Produttore: Marca \(ID: 40\)/);
+    assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
+  });
+});
 
-    assert.equal(result.code, 0);
-    assert.match(result.output, /\[CONVERT\] Conversione completata con successo/);
-    assert.match(result.output, /2\. Continua con importa \/ aggiorna prodotti/);
-    assert.match(result.output, /\[PREFLIGHT\] Controlli preliminari completati con successo/);
+test('CLI: import Vudoo usa il catalogo remoto mockato in DRY_RUN', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['3', 'test-company', '5'], { TEST_VUDOO_CODE: 'test-company' });
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /\[VUDOO\] Preflight completato/);
     assert.match(result.output, /Payload Base\.com \(addInventoryProduct\)/);
-    assert.match(result.output, /DRY_RUN: nessuna scrittura su Base\.com/);
+    assert.match(result.output, /DRY_RUN: nessuna scrittura/);
+    assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
   });
 });
 
-test('CLI: input non valido torna al menu senza avviare operazioni', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'cli.js', ['99', '7']);
-
-    assert.equal(result.code, 0);
-    assert.match(result.output, /Scelta non valida/);
-    assert.doesNotMatch(result.output, /\[(?:CONVERT|PREFLIGHT|IMPORT|SYNC)\] Avvio/);
+test('CLI: codice azienda vuoto ferma il flusso prima del preflight', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['1', '   ', '5']);
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /Codice azienda mancante/);
+    assert.doesNotMatch(result.output, /\[PREFLIGHT\]|Payload Base/);
   });
 });
 
-test('CLI: un errore di conversione è attribuito alla fase corretta', async () => {
-  await withFixture(
-    async (directory) => {
-      const result = await runProcess(directory, 'cli.js', ['1', '7']);
-
-      assert.equal(result.code, 1);
-      assert.match(result.output, /\[CONVERT\] Avvio conversione/);
-      assert.match(result.output, /ERRORE CONVERSIONE/);
-      assert.doesNotMatch(result.output, /\[PREFLIGHT\] Avvio/);
-      assert.doesNotMatch(result.output, /Payload addInventoryProduct/);
-    },
-    { invalidXml: true },
-  );
+test('CLI: XML remoto invalido non raggiunge Base.com', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['3', 'test-company', '5'], {
+      TEST_VUDOO_CODE: 'test-company',
+      TEST_BASE_SCENARIO: 'vudoo-invalid',
+    });
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /\[VUDOO\] ERRORE/);
+    assert.doesNotMatch(result.output, /\[PREFLIGHT\]|Payload Base/);
+  });
 });
 
-test('sync diretto: esegue davvero sync.js e completa convert, preflight e import', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'sync.js');
+test('CLI: input non valido torna al nuovo menu senza avviare operazioni', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['99', '5']);
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /Scelta non valida.*0 a 5/);
+    assert.doesNotMatch(result.output, /\[VUDOO\]|\[PREFLIGHT\]|DIAGNOSTICA/);
+  });
+});
 
-    assert.equal(result.code, 0);
+test('Utility legacy: XML locale viene ancora convertito separatamente in JSON', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'tools/legacy/convert-json.js');
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /XML:\s+1 item/);
+    const products = JSON.parse(await readFile(join(directory, 'real_products.json'), 'utf8'));
+    assert.equal(products.length, 1);
+    assert.equal(products[0].id, 'SKU-TEST');
+  }, { legacyCatalog: true });
+});
+
+test('Utility legacy: sync locale resta disponibile e protetto da DRY_RUN', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'tools/legacy/sync-json.js');
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /FLUSSO LEGACY XML → JSON → BASE/);
     assert.match(result.output, /--- Step 1: Conversione XML/);
     assert.match(result.output, /--- Step 2: Preflight Check/);
-    assert.match(result.output, /\[PREFLIGHT\] Controlli preliminari completati con successo/);
-    assert.match(result.output, /--- Step 3: Importazione \/ Aggiornamento prodotti/);
-    assert.match(result.output, /Payload Base\.com \(addInventoryProduct\)/);
-    assert.match(result.output, /DRY_RUN: nessuna scrittura su Base\.com/);
-  });
-});
-
-test('sync diretto: preflight fallito blocca l’import nella fase corretta', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'sync.js', [], {
-      TEST_BASE_SCENARIO: 'preflight-error',
-    });
-
-    assert.equal(result.code, 1);
-    assert.match(result.output, /--- Step 2: Preflight Check/);
-    assert.match(result.output, /TEST_PREFLIGHT_ERROR/);
-    assert.doesNotMatch(result.output, /--- Step 3: Importazione \/ Aggiornamento prodotti/);
-    assert.doesNotMatch(result.output, /Payload Base\.com \(addInventoryProduct\)/);
-  });
-});
-
-test('sync diretto: errore import avviene dopo un preflight riuscito', async () => {
-  await withFixture(async (directory) => {
-    const result = await runProcess(directory, 'sync.js', [], {
-      TEST_BASE_SCENARIO: 'import-error',
-    });
-
-    assert.equal(result.code, 1);
-    assert.match(result.output, /\[PREFLIGHT\] Controlli preliminari completati con successo/);
-    assert.match(result.output, /--- Step 3: Importazione \/ Aggiornamento prodotti/);
-    assert.match(result.output, /TEST_IMPORT_ERROR/);
-    assert.match(result.output, /\[SYNC\] Importazione fallita con codice: 1/);
-  });
+    assert.match(result.output, /--- Step 3: Importazione/);
+    assert.match(result.output, /DRY_RUN: nessuna scrittura/);
+  }, { legacyCatalog: true });
 });

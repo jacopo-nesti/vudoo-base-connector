@@ -1,78 +1,41 @@
 # Modalità della CLI e Comandi Disponibili
 
-Questo documento descrive le modalità di esecuzione e i comandi disponibili per la gestione, la sincronizzazione e il testing del progetto **Vudoo Base Connector**.
+Questo documento descrive le modalità di esecuzione del progetto **Vudoo Base Connector**.
 
----
-
-## 1. Menu Principale
+## Menu principale
 
 ### `npm start`
 
-Apre la CLI interattiva con le seguenti opzioni:
+Apre la CLI interattiva:
 
 0. Verifica ambiente e configurazione;
-1. Converti XML → JSON;
-2. Esegui controlli preliminari;
-3. Sincronizza produttori;
-4. Importa o aggiorna prodotti;
-5. Esegui il flusso completo;
-6. Esegui i test automatici;
-7. Esci.
+1. Preflight catalogo Vudoo;
+2. Sincronizza produttori da Vudoo;
+3. Importa o aggiorna il catalogo Vudoo su Base.com;
+4. Esegue i test automatici;
+5. Esce.
 
-La CLI mostra lo stato corrente di `DRY_RUN` e `TEST_MODE` senza modificare automaticamente il file `.env`.
+Le opzioni 1, 2 e 3 chiedono ogni volta il `codiceAzienda`, recuperano il catalogo remoto e lo elaborano in memoria. Non richiedono `VUDOO.xml` o `real_products.json`. La CLI mostra `DRY_RUN` e `TEST_MODE` senza modificare il file `.env`.
 
----
-
-## 2. Verifica configurazione
+## Verifica configurazione
 
 ### `npm run check`
 
-Controlla ambiente, configurazione e collegamento read-only alle risorse Base.com necessarie.
+Controlla configurazione, rate limiter e collegamento read-only alle risorse Base.com necessarie. Non legge cataloghi locali.
 
----
+## Utility legacy
 
-## 3. Importazione Diretta
+I comandi seguenti restano disponibili per analisi offline, debug e compatibilità con il precedente flusso locale:
 
-### `npm run import`
+* `npm run convert`: converte `VUDOO.xml` in `real_products.json`;
+* `npm run import`: importa il JSON locale;
+* `npm run productor`: sincronizza i produttori dal JSON locale;
+* `npm run sync`: esegue XML → JSON → preflight → import.
 
-Esegue direttamente il preflight e l'importazione/aggiornamento dei prodotti verso Base.com.
+I relativi entry point si trovano in `tools/legacy/` e non fanno parte del menu principale.
 
----
-
-## 4. Conversione
-
-### `npm run convert`
-
-Converte il file locale `VUDOO.xml` in `real_products.json`.
-
----
-
-## 5. Produttori
-
-### `npm run productor`
-
-Esegue la sincronizzazione separata dei produttori. Il comando non fa parte del sync completo perché l'importazione gestisce già i produttori mancanti.
-
----
-
-## 6. Flusso Completo
-
-### `npm run sync`
-
-Esegue in sequenza:
-
-```text
-XML → JSON → preflight → importazione Base.com
-```
-
-Il flusso si interrompe se conversione, preflight o importazione falliscono.
-
----
-
-## 7. Test
+## Test
 
 ### `npm test`
 
-Esegue la suite automatica configurata nel progetto. La suite corrente comprende **110 test**.
-
-Prima di verifiche manuali verso Base.com è consigliato mantenere `DRY_RUN=true`; per smoke test read-only è disponibile anche `tests/read-only-base.mjs`.
+Esegue la suite automatica offline. Prima di verifiche manuali verso Base.com è consigliato mantenere `DRY_RUN=true`; per smoke test read-only è disponibile anche `tests/read-only-base.mjs`.

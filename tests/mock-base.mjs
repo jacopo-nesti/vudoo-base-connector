@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict';
+import { catalogXml, extraFields, parameters, parameterGroups } from './fixtures/vudoo.js';
 const BASE_API_URL = 'https://api.baselinker.com/connector.php';
 const scenario = process.env.TEST_BASE_SCENARIO;
 
@@ -17,6 +19,14 @@ function baseResponse(data) {
 }
 
 globalThis.fetch = async (url, request = {}) => {
+  if (String(url).startsWith('https://www.vudoo.org/ProductCatalog.ashx?') && process.env.TEST_VUDOO_CODE) {
+    assert.equal(request.method, 'GET');
+    assert.deepEqual(Object.fromEntries(new URL(url).searchParams), {
+      codiceAzienda: process.env.TEST_VUDOO_CODE, idCategoria: '', disponibili: 'true', lingua: '1', listino: '6', risultati: '500',
+    });
+    assert.equal(request.headers?.['X-BLToken'], undefined);
+    return { ok: true, headers: { get: () => 'application/xml' }, text: async () => scenario === 'vudoo-invalid' ? '<rss>' : catalogXml() };
+  }
   if (url !== BASE_API_URL) {
     throw new Error(`Richiesta esterna non prevista nel test: ${url}`);
   }
@@ -44,6 +54,8 @@ globalThis.fetch = async (url, request = {}) => {
   }
 
   const responses = {
+    getInventoryExtraFields: { extra_fields: extraFields },
+    getInventoryParameters: { parameters, parameter_groups: parameterGroups },
     getInventories: {
       inventories: [
         {

@@ -14,14 +14,12 @@ Il comportamento dell'applicazione viene configurato tramite le variabili d'ambi
 
 Le seguenti impostazioni configurano le protezioni del client Base.com:
 
-* **`BASE_API_WINDOW_MS`**: durata della finestra mobile;
-* **`BASE_API_SAFE_LIMIT`**: numero massimo prudenziale di richieste nella finestra;
-* **`BASE_API_SOFT_LIMIT`**: soglia dalla quale il client rallenta progressivamente;
+* **`BASE_API_REQUESTS_PER_MINUTE`**: numero massimo di richieste avviate in una finestra mobile di 60 secondi. Se assente o vuoto usa `100`; un valore esplicito deve essere un intero maggiore di zero;
 * **`BASE_API_READ_ATTEMPTS`**: tentativi totali consentiti per una lettura temporaneamente fallita;
 * **`BASE_API_RETRY_DELAY_MS`**: attesa iniziale tra i retry delle letture;
 * **`BASE_API_RATE_LIMIT_DELAY_MS`**: pausa condivisa usata per rate limit reattivi quando non è disponibile un'attesa più lunga tramite `Retry-After`.
 
-I valori presenti in `.env.example` sono impostazioni prudenziali interne e configurabili, non dichiarazioni delle quote ufficiali Base.com.
+Il rallentamento preventivo inizia internamente all'80% del valore configurato. Il valore deve essere impostato in modo compatibile con il piano Base.com usato dall'account.
 
 ## Configurazione iniziale
 
