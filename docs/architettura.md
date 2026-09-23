@@ -6,20 +6,17 @@ Questo documento descrive l'architettura dei componenti e il ruolo dei singoli f
 
 ## 1. Panoramica della Struttura
 
-Il progetto adotta un'architettura modulare, separando gli entry point e l'interfaccia nella root dai moduli condivisi nella cartella `src/`.
+Il progetto adotta un'architettura modulare, separando la CLI nella root, i moduli runtime in `src/` e le utility locali precedenti in `tools/legacy/`.
 
-Il flusso usa un file XML locale come sorgente, genera `real_products.json` e sincronizza i dati verso Base.com dopo preflight, normalizzazione e confronto.
+Il flusso principale recupera il catalogo XML remoto Vudoo, lo elabora in memoria e sincronizza i dati verso Base.com dopo normalizzazione, validazione, deduplicazione e preflight.
 
 ---
 
 ## 2. Moduli alla Radice
 
 * **`cli.js`**: menu interattivo principale;
-* **`index.js`**: orchestrazione dell'importazione e dell'aggiornamento prodotti;
-* **`sync.js`**: entry point del flusso completo non interattivo;
 * **`check.js`**: diagnostica dell'ambiente e della configurazione;
-* **`convert_xml_to_json.js`**: wrapper della conversione XML → JSON;
-* **`productor.js`**: wrapper della sincronizzazione separata dei produttori.
+* **`tools/legacy/`**: entry point versionati per conversione, import, sync e produttori basati sui file locali.
 
 ---
 
@@ -31,8 +28,12 @@ Il flusso usa un file XML locale come sorgente, genera `real_products.json` e si
 * **`src/categories.js`**: recupero, associazione e creazione controllata delle categorie;
 * **`src/manufacturers.js`**: recupero, associazione e creazione controllata dei produttori;
 * **`src/productor.js`**: sincronizzazione separata dei produttori usando la logica condivisa;
-* **`src/converter.js`**: parsing di `VUDOO.xml` e generazione di `real_products.json`;
-* **`src/operations.js`**: orchestrazione delle operazioni richiamate da CLI e sync;
+* **`src/converter.js`**: parsing XML e composizione del titolo condivisi dal runtime remoto e dal convertitore legacy;
+* **`src/vudooXml.js`**: fetch, parsing e normalizzazione del catalogo remoto;
+* **`src/vudooImport.js`**: preflight, produttori e import del catalogo remoto;
+* **`src/vudooBaseFields.js`**: risoluzione read-only di Parameters e Additional Fields Base.com;
+* **`src/importer.js`**: CREATE, UPDATE, SKIP e report;
+* **`src/operations.js`**: orchestrazione delle operazioni richiamate dalla CLI;
 * **`src/checker.js`**: controlli diagnostici;
 * **`src/config.js`** e **`src/logger.js`**: configurazione e log condivisi.
 
@@ -42,4 +43,4 @@ Il flusso usa un file XML locale come sorgente, genera `real_products.json` e si
 
 Le scritture passano dal gate centralizzato `DRY_RUN` in `src/baseApi.js`. Le letture temporaneamente fallite possono essere ritentate; le scritture con esito incerto vengono verificate senza retry ciechi.
 
-La suite è contenuta in `tests/integration-review.test.js` e `tests/cli.test.js`. Il file `tests/read-only-base.mjs` offre una guardia aggiuntiva per smoke test manuali read-only.
+La suite è contenuta in `tests/integration-review.test.js`, `tests/cli.test.js` e `tests/vudoo-xml.test.js`. Il file `tests/read-only-base.mjs` offre una guardia aggiuntiva per smoke test manuali read-only.

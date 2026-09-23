@@ -1,11 +1,12 @@
-import { token, inventoryId, warehouseId, dryRun } from './config.js';
+import { token, inventoryId, warehouseId, dryRun, getBaseApiRequestsPerMinute } from './config.js';
 import { log } from './logger.js';
-import { buildBasePayload, buildBaseUpdatePayload } from './products.js';
+import { buildBasePayload, buildBaseUpdatePayload, featureValuesMatch } from './products.js';
 import { nameIdentity } from './names.js';
 
 const readMethods = new Set([
   'getInventories', 'getInventoryPriceGroups', 'getInventoryWarehouses',
   'getInventoryManufacturers', 'getInventoryCategories',
+  'getInventoryExtraFields', 'getInventoryParameters',
   'getInventoryProductsList', 'getInventoryProductsData',
 ]);
 let requestQueue = Promise.resolve();
@@ -108,9 +109,9 @@ export async function callBase(method, parameters = {}) {
   if (dryRun === 'true' && !readOnly) {
     throw new Error(`DRY_RUN: scrittura ${method} bloccata.`);
   }
-  const windowMs = apiSetting('BASE_API_WINDOW_MS', 60000, 1, 3600000);
-  const safeLimit = apiSetting('BASE_API_SAFE_LIMIT', 90, 1, 100000);
-  const softLimit = apiSetting('BASE_API_SOFT_LIMIT', 80, 0, safeLimit - 1);
+  const windowMs = 60000;
+  const safeLimit = getBaseApiRequestsPerMinute();
+  const softLimit = Math.floor(safeLimit * 0.8);
   const attempts = apiSetting('BASE_API_READ_ATTEMPTS', 3, 1, 10);
   const retryDelay = apiSetting('BASE_API_RETRY_DELAY_MS', 1000, 1, 3600000);
   const rateLimitDelay = apiSetting('BASE_API_RATE_LIMIT_DELAY_MS', 60000, 1, 3600000);
@@ -267,7 +268,10 @@ function writtenValuesMatch(payload, details, sku) {
       for (const [key, desired] of Object.entries(value)) {
         const current = details[field]?.[key];
         if (current == null) return false;
-        if (field === 'text_fields' ? String(current) !== String(desired) : !sameNumber(current, desired)) return false;
+        if (field === 'text_fields' && key === 'features') {
+          if (!featureValuesMatch(desired, current)) return false;
+        } else if (field === 'text_fields' && typeof desired !== 'number'
+          ? String(current) !== String(desired) : !sameNumber(current, desired)) return false;
       }
     } else if (field === 'images') {
       for (const [position, desired] of Object.entries(value)) {
@@ -276,7 +280,7 @@ function writtenValuesMatch(payload, details, sku) {
       }
     } else if (field === 'ean') {
       if (details[field] == null || String(details[field]) !== String(value)) return false;
-    } else if (['weight', 'manufacturer_id', 'category_id'].includes(field)) {
+    } else if (['weight', 'manufacturer_id', 'category_id', 'tax_rate', 'height', 'width', 'length'].includes(field)) {
       if (!sameNumber(details[field], value)) return false;
     } else {
       return false;
@@ -294,6 +298,9 @@ async function writeProductAndVerify(payload, sku) {
   const operation = payload.product_id == null ? 'CREATE' : 'UPDATE';
   try {
     const result = await callBase('addInventoryProduct', payload);
+    if (payload.text_fields?.features && Object.keys(result.warnings?.parameters ?? {}).length) {
+      throw apiError('addInventoryProduct: Parameters non confermati da Base.com', false, true);
+    }
     const id = Number(result.product_id);
     if (!Number.isSafeInteger(id) || id <= 0 || (payload.product_id != null && id !== payload.product_id)) {
       throw apiError('addInventoryProduct: conferma senza product_id valido/corrispondente', false, true);

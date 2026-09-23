@@ -32,7 +32,7 @@ Sono già disponibili:
 - sanitizzazione dei testi Unicode incompatibili;
 - rate limiting adattivo, retry controllati delle letture e gestione delle scritture con esito incerto;
 - report con errori ed esiti incerti separati;
-- suite automatica di 110 test.
+- suite automatica offline.
 
 ---
 

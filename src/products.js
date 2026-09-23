@@ -10,7 +10,8 @@ export async function getProducts() {
 }
 
 export function parseFeedNumber(value, unit, field) {
-  if (typeof value !== 'string' || !value.trim().endsWith(unit)) {
+  if (typeof value !== 'string' || !(unit.toLowerCase() === 'kg'
+    ? value.trim().toLowerCase().endsWith('kg') : value.trim().endsWith(unit))) {
     throw new Error(`${field} deve essere una stringa con unita ${unit}.`);
   }
   let text = value.trim().slice(0, -unit.length).trim();
@@ -118,7 +119,7 @@ export function sanitizeTextForBase(text) {
 
 export function buildBasePayload(product, config) {
   const payload = { inventory_id: config.inventory.inventory_id };
-  for (const field of ['sku', 'ean', 'weight']) {
+  for (const field of ['sku', 'ean', 'weight', 'tax_rate', 'height', 'width', 'length']) {
     if (product[field] != null) payload[field] = product[field];
   }
 
@@ -133,6 +134,22 @@ export function buildBasePayload(product, config) {
   const textFields = {};
   if (product.title != null) textFields.name = sanitizeTextForBase(product.title);
   if (product.description != null) textFields.description = sanitizeTextForBase(product.description);
+  for (const field of ['description_extra1', 'description_extra2', 'description_extra3', 'description_extra4']) {
+    if (product[field] != null) textFields[field] = sanitizeTextForBase(product[field]);
+  }
+  if (Object.keys(product.features ?? {}).length) {
+    textFields.features = Object.fromEntries(Object.entries(product.features).map(([name, value]) => [name, sanitizeTextForBase(value)]));
+  }
+  for (const [name, value] of Object.entries(product.additional_fields ?? {})) {
+    const field = config.extraFields?.get(name);
+    if (!field) throw new Error(`Additional Field non risolto: ${name}.`);
+    const text = sanitizeTextForBase(String(value));
+    if (field.kind === 0 && text.length > 200) throw new Error(`Additional Field troppo lungo: ${name}.`);
+    if (field.editor_type === 'number' && (text.trim() === '' || !Number.isFinite(Number(text)))) {
+      throw new Error(`Additional Field numerico non valido: ${name}.`);
+    }
+    textFields[`extra_field_${field.extra_field_id}`] = field.editor_type === 'number' ? Number(text) : text;
+  }
   if (Object.keys(textFields).length > 0) payload.text_fields = textFields;
 
   if (product.price != null) {
@@ -170,7 +187,8 @@ export function detectAndFilterDuplicates(products) {
 
       if (seenSkus.has(sku)) {
         const first = uniqueProducts.find(item => item?.id === sku);
-        for (const field of ['title', 'description', 'price', 'ean', 'weight', 'image_link', 'brand', 'product_type', 'manufacturer_id', 'category_id']) {
+        for (const field of ['title', 'description', 'price', 'ean', 'weight', 'image_link', 'brand', 'product_type', 'manufacturer_id', 'category_id',
+          'tax_rate', 'height', 'width', 'length', 'description_extra1', 'description_extra2', 'description_extra3', 'description_extra4', 'features', 'additional_fields']) {
           if (JSON.stringify(first[field] ?? null) !== JSON.stringify(product[field] ?? null)) {
             throw new Error(`SKU duplicato ${sku} con valori discordanti: ${field}.`);
           }
@@ -193,11 +211,32 @@ export function detectAndFilterDuplicates(products) {
     };
 }
 
+export function featureValuesMatch(desired, current) {
+  if (!current || typeof current !== 'object') return false;
+  return Object.entries(desired).every(([name, value]) => {
+    const saved = current[name];
+    if (saved == null) return false;
+    if (name === 'Shipping Weight (kg)') {
+      return String(saved).trim() !== '' && Number.isFinite(Number(saved)) && Number(saved) === Number(value);
+    }
+    return String(saved) === String(value);
+  });
+}
+
+export function assertVudooSkuCompatibility(product, existing) {
+  const desired = product.features?.['Vudoo SKU'];
+  const current = existing?.text_fields?.features?.['Vudoo SKU'];
+  if (desired != null && current != null && String(desired).trim() !== String(current).trim()) {
+    throw new Error(`SKU Base ${product.sku}: Parameter Vudoo SKU incompatibile.`);
+  }
+}
+
 export function buildBaseUpdatePayload(product, existing, config) {
   if (existing.sku !== product.sku) throw new Error('UPDATE: SKU del dettaglio diverso da quello richiesto.');
+  assertVudooSkuCompatibility(product, existing);
   const desired = buildBasePayload(product, config);
   const changes = {};
-  for (const field of ['ean', 'weight', 'manufacturer_id', 'category_id']) {
+  for (const field of ['ean', 'weight', 'manufacturer_id', 'category_id', 'tax_rate', 'height', 'width', 'length']) {
     if (desired[field] == null) continue;
     const equal = field === 'ean'
       ? String(desired[field]) === String(existing[field] ?? '')
@@ -208,8 +247,17 @@ export function buildBaseUpdatePayload(product, existing, config) {
     const values = {};
     for (const [key, value] of Object.entries(desired[field] ?? {})) {
       const current = existing[field]?.[key];
+      if (field === 'text_fields' && key === 'features') {
+        if (current != null && (typeof current !== 'object' || (Array.isArray(current) && current.length))) {
+          throw new Error('Parameters Base: struttura esistente non valida.');
+        }
+        if (!featureValuesMatch(value, current)) values.features = { ...current, ...value };
+        continue;
+      }
       const equal = field === 'text_fields'
-        ? String(value) === String(current ?? '')
+        ? (typeof value === 'number'
+          ? current != null && String(current).trim() !== '' && Number(current) === value
+          : String(value) === String(current ?? ''))
         : current != null && Number(value) === Number(current);
       if (!equal) values[key] = value;
     }

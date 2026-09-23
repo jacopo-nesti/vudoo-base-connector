@@ -4,11 +4,152 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import * as xml from 'fast-xml-parser';
+import { catalogXml, itemXml, extraFields, parameters as fieldParameters, parameterGroups } from './fixtures/vudoo.js';
+import { normalizeVudooProduct } from '../src/vudooXml.js';
+import { parseCatalogXml } from '../src/converter.js';
 import { parseFeedNumber, normalizeProduct, buildBasePayload, buildBaseUpdatePayload, detectAndFilterDuplicates, sanitizeTextForBase } from '../src/products.js';
 
 const source = { id: 'SKU-A', title: 'Prodotto', price: '25,00 EUR', weight: '0.1 Kg', brand: 'Marca', product_type: 'Casa > Cura' };
 const config = { inventory: { inventory_id: 10 }, priceGroup: { price_group_id: 20, currency: 'EUR' }, warehouse: { id: 'bl_30' } };
 const details = { sku: 'SKU-A', weight: 0.1, text_fields: { name: 'Prodotto' }, prices: { 99: 100, 20: 25 }, manufacturer_id: 40, category_id: 51, images: {} };
+
+async function remoteSandbox(options = {}, expectedError) {
+  return sandbox({ ...options, entry: '../src/vudooImport.js', forbidCatalogFiles: true,
+    action: async api => {
+      if (expectedError) await assert.rejects(api.importVudooCatalog('test-company'), expectedError);
+      else assert.equal(await api.importVudooCatalog('test-company'), 0);
+    },
+  });
+}
+
+test('XML remoto: warning Parameters non viene dichiarato successo e non ripete CREATE', async () => {
+  const product = normalizeVudooProduct(parseCatalogXml(catalogXml())[0]);
+  const remoteConfig = { ...config, extraFields: new Map(extraFields.map(field => [field.name, field])) };
+  const result = await sandbox({ entry: '../src/baseApi.js', env: { DRY_RUN: 'false' }, existing: true,
+    response: method => method === 'addInventoryProduct'
+      ? { ok: true, json: async () => ({ status: 'SUCCESS', product_id: 60, warnings: { parameters: [{ reason: 'unknown_parameter' }] } }) }
+      : undefined,
+    action: api => assert.rejects(api.sendProductToBase(product, remoteConfig), error => error.uncertain === true),
+  });
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
+  assert.ok(result.calls.some(call => call.method === 'getInventoryProductsData'));
+});
+
+test('XML remoto: prodotto invariato salta, cambiamento aggiorna solo stock con ID esistente', async () => {
+  const product = normalizeVudooProduct(parseCatalogXml(catalogXml())[0]);
+  const remoteConfig = { ...config, extraFields: new Map(extraFields.map(field => [field.name, field])) };
+  const payload = buildBasePayload(product, remoteConfig);
+  const categories = [{ category_id: 50, parent_id: 0, name: 'Vini, Gastronomia' },
+    { category_id: 51, parent_id: 50, name: 'Birra' }, { category_id: 52, parent_id: 51, name: 'Birra Artigianale' }];
+  const saved = { ...payload, images: { 1: product.image_link }, manufacturer_id: 40, category_id: 52 };
+  const unchanged = await remoteSandbox({ existing: true, details: saved, categories, env: { DRY_RUN: 'false' } });
+  assert.ok(unchanged.logs.some(log => log.includes('Saltati perché invariati: 1')));
+  assert.ok(unchanged.calls.every(call => call.method === 'VUDOO_GET' || call.method.startsWith('get')));
+  const changed = await remoteSandbox({ existing: true, details: { ...saved, stock: { bl_30: 1 } }, categories, env: { DRY_RUN: 'false' } });
+  const writes = changed.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.equal(writes.length, 1);
+  assert.equal(JSON.stringify(writes[0].parameters), JSON.stringify({ inventory_id: 10, stock: { bl_30: 234 }, product_id: 60 }));
+});
+
+test('XML remoto: Vudoo SKU incompatibile blocca prima di categorie, produttori e prodotto', async () => {
+  const product = normalizeVudooProduct(parseCatalogXml(catalogXml())[0]);
+  const remoteConfig = { ...config, extraFields: new Map(extraFields.map(field => [field.name, field])) };
+  const payload = buildBasePayload(product, remoteConfig);
+  const result = await sandbox({ entry: '../src/vudooImport.js', forbidCatalogFiles: true,
+    existing: true, categories: [], manufacturers: [], env: { DRY_RUN: 'false' },
+    details: { ...payload, text_fields: { ...payload.text_fields, features: { ...payload.text_fields.features, 'Vudoo SKU': 'DIFFERENTE' } } },
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 1),
+  });
+  assert.ok(result.logs.some(log => log.includes('Vudoo SKU incompatibile')));
+  assert.equal(result.calls.filter(call => ['addInventoryCategory', 'addInventoryManufacturer', 'addInventoryProduct'].includes(call.method)).length, 0);
+});
+
+test('XML remoto: flusso interamente in memoria, DRY_RUN e lookup campi read-only', async () => {
+  const result = await remoteSandbox();
+  assert.equal(result.calls[0].method, 'VUDOO_GET');
+  assert.ok(result.calls.slice(1).every(call => call.method.startsWith('get')));
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryExtraFields').length, 1);
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryParameters').length, 1);
+  assert.ok(result.logs.some(log => log.includes('Simulati: 1')));
+  assert.equal(result.writes.size, 0);
+});
+
+for (const [name, feed, error] of [
+  ['XML invalido', '<rss>', /XML/],
+  ['catalogo vuoto', catalogXml(''), /item|vuoto/],
+  ['secondo prodotto invalido anche TEST_MODE', catalogXml(itemXml + itemXml.replace('3.20 EUR', 'invalid')), /record 2/],
+  ['duplicati discordanti', catalogXml(itemXml + itemXml.replace('3.20 EUR', '5.20 EUR')), /discordanti/],
+]) {
+  test(`XML remoto: ${name} blocca tutte le chiamate Base`, async () => {
+    const result = await remoteSandbox({ xml: feed }, error);
+    assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+    assert.equal(result.writes.size, 0);
+  });
+}
+
+for (const [name, options, error] of [
+  ['extra assente', { extraFields: [] }, /Additional Field mancante/],
+  ['extra ambiguo', { extraFields: [...extraFields, extraFields[0]] }, /ambiguo/],
+  ['editor non supportato', { extraFields: extraFields.map(field => ({ ...field, editor_type: 'select' })) }, /non supportato/],
+  ['gruppo assente', { parameterGroups: [] }, /Gruppo Parameters/],
+  ['parametro assente', { parameters: [] }, /Parameter mancante/],
+  ['parametro ambiguo', { parameters: [...fieldParameters, fieldParameters[0]] }, /ambiguo/],
+  ['parent gruppo errato', { parameterGroups: [{ name: 'Vudoo / Marketplace', parameter_keys: [] }] }, /Parameter mancante/],
+]) {
+  test(`XML remoto: ${name} blocca prima di creare risorse`, async () => {
+    const result = await remoteSandbox({ ...options, env: { DRY_RUN: 'false' } }, error);
+    assert.ok(result.calls.every(call => call.method === 'VUDOO_GET' || call.method.startsWith('get')));
+  });
+}
+
+test('XML remoto: TEST_MODE seleziona un solo SKU dopo validazione e dedup completa', async () => {
+  const result = await remoteSandbox({ xml: catalogXml(itemXml + itemXml + itemXml.replace('<g:id>389578</g:id>', '<g:id>389579</g:id>')) });
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryProductsList').length, 1);
+  assert.ok(result.logs.some(log => log.includes('3 prodotti ricevuti, 2 SKU unici, 1 duplicati')));
+});
+
+test('XML remoto: CREATE simulate con mock riusano gerarchia e produttore, nessuna immagine extra', async () => {
+  const result = await remoteSandbox({ env: { DRY_RUN: 'false', TEST_MODE: 'false' }, categories: [], manufacturers: [],
+    xml: catalogXml(itemXml + itemXml.replace('<g:id>389578</g:id>', '<g:id>389579</g:id>').replace('<g:size>3000 ml.</g:size>', '<g:size>250 ml.</g:size>')) });
+  const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.equal(creates.length, 2);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryManufacturer').length, 1);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryCategory').length, 3);
+  assert.equal(creates[0].parameters.category_id, creates[1].parameters.category_id);
+  assert.equal(creates[0].parameters.manufacturer_id, creates[1].parameters.manufacturer_id);
+  assert.equal(creates[0].parameters.stock.bl_30, 234);
+  assert.equal(creates[0].parameters.text_fields.features.MPN, 'MANUFACTURER-PART');
+  assert.equal(creates[0].parameters.sku, '389578');
+  assert.equal(creates[1].parameters.sku, '389579');
+  assert.equal(creates[0].parameters.text_fields.features['Vudoo SKU'], 'HKZDVHCW');
+  assert.equal(Object.keys(creates[0].parameters.images).length, 1);
+  assert.equal(result.writes.size, 0);
+});
+
+for (const operation of ['CREATE', 'UPDATE']) {
+  for (const matches of [true, false]) {
+    test(`XML remoto: ${operation} incerta verifica nuovi campi, corrispondenza=${matches}, nessun retry`, async () => {
+      const product = normalizeVudooProduct(parseCatalogXml(catalogXml())[0]);
+      const remoteConfig = { ...config, extraFields: new Map(extraFields.map(field => [field.name, field])) };
+      const desired = buildBasePayload(product, remoteConfig);
+      const saved = { ...desired, images: { 1: product.image_link } };
+      if (!matches) saved.text_fields = { ...saved.text_fields, features: { ...saved.text_fields.features, MPN: 'different' } };
+      let result;
+      const run = await sandbox({ entry: '../src/baseApi.js', env: { DRY_RUN: 'false' }, existing: true, details: saved,
+        response: method => { if (method === 'addInventoryProduct') throw new Error('Risposta persa'); },
+        action: async api => {
+          const promise = operation === 'CREATE' ? api.sendProductToBase(product, remoteConfig)
+            : api.updateProductInBase(60, product, remoteConfig, { sku: product.sku });
+          if (matches) result = await promise;
+          else await assert.rejects(promise, error => error.uncertain === true);
+        },
+      });
+      assert.equal(run.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
+      assert.ok(run.calls.some(call => call.method === 'getInventoryProductsData'));
+      if (matches) assert.equal(result.confirmed_after_uncertain, true);
+    });
+  }
+}
 
 test('Sanitizzazione: elimina non-BMP e spazi introdotti dalla rimozione', () => {
   assert.equal(sanitizeTextForBase('Test 💧 descrizione 🖤 finale'), 'Test descrizione finale');
@@ -72,6 +213,12 @@ async function sandbox(options = {}) {
     URL, URLSearchParams, AbortSignal, process: processMock,
     console: { log: (...args) => logs.push(args.join(' ')), warn: (...args) => logs.push(args.join(' ')), error: (...args) => logs.push(args.join(' ')) },
     fetch: async (url, request) => {
+      if (String(url).startsWith('https://www.vudoo.org/ProductCatalog.ashx?')) {
+        assert.equal(request.method, 'GET');
+        assert.equal(request.headers?.['X-BLToken'], undefined);
+        calls.push({ method: 'VUDOO_GET', parameters: Object.fromEntries(new URL(url).searchParams) });
+        return { ok: true, headers: { get: () => 'application/xml' }, text: async () => options.xml ?? catalogXml() };
+      }
       assert.equal(url, 'https://api.baselinker.com/connector.php');
       assert.equal(request.method, 'POST');
       assert.equal(request.headers['X-BLToken'], 'test-only-token');
@@ -84,6 +231,8 @@ async function sandbox(options = {}) {
       if (options.httpError) return { ok: false, status: 503 };
       if (options.networkError) throw new Error('Rete simulata non disponibile');
       const responses = {
+        getInventoryExtraFields: { extra_fields: options.extraFields ?? extraFields },
+        getInventoryParameters: { parameters: options.parameters ?? fieldParameters, parameter_groups: options.parameterGroups ?? parameterGroups },
         getInventories: { inventories: options.inventories ?? [{ inventory_id: 11, is_default: false }, { inventory_id: 10, name: 'Default', is_default: true, price_groups: [20], default_price_group: 20, warehouses: ['bl_30'] }] },
         getInventoryPriceGroups: { price_groups: [{ price_group_id: 20, currency: 'EUR', name: 'Default' }] },
         getInventoryWarehouses: { warehouses: options.warehouses ?? [{ warehouse_id: 30, warehouse_type: 'bl', name: 'Warehouse' }] },
@@ -102,6 +251,9 @@ async function sandbox(options = {}) {
   const fakeFs = {
     readFile: async url => {
       const filename = fileURLToPath(url);
+      if (options.forbidCatalogFiles && /(?:real_products.json|VUDOO.xml)$/.test(filename)) {
+        throw new Error('Il flusso remoto non deve leggere cataloghi locali');
+      }
       if (writes.has(filename)) return writes.get(filename);
       if (filename.endsWith('real_products.json')) return JSON.stringify(options.products ?? [source]);
       if (filename.endsWith('VUDOO.xml')) return '<rss xmlns:g="http://base.google.com/ns/1.0"><channel><item><title>Test</title><g:id>SKU-A</g:id><g:brand>Marca</g:brand><g:price>25,00 EUR</g:price></item></channel></rss>';
@@ -121,7 +273,7 @@ async function sandbox(options = {}) {
     modules.set(id, module);
     return module;
   }
-  const module = load(new URL(options.entry ?? '../index.js', import.meta.url).href);
+  const module = load(new URL(options.entry ?? '../tools/legacy/import-json.js', import.meta.url).href);
   await module.link((specifier, parent) => load(specifier.startsWith('.') ? new URL(specifier, parent.identifier).href : specifier));
   await module.evaluate();
   if (options.action) await options.action(module.namespace, { calls, logs, waits, advance: milliseconds => { now += milliseconds; } });
@@ -359,8 +511,8 @@ test('Produttori: riuso cache e DRY_RUN anche nel comando separato', async () =>
   assert.equal(result.logs.filter(log => log.includes('Produttore da creare')).length, 1);
   assert.ok(result.calls.every(call => call.method.startsWith('get')));
 });
-test('Convertitore eseguito in memoria senza sovrascrivere il JSON locale', async () => {
-  const result = await sandbox({ entry: '../src/converter.js', action: module => module.convertXmlToJson() });
+test('Convertitore legacy eseguito separatamente dal runtime remoto', async () => {
+  const result = await sandbox({ entry: '../tools/legacy/xml-to-json.js', action: module => module.convertXmlToJson() });
   assert.equal(result.writes.size, 1);
   const products = JSON.parse([...result.writes.values()][0]);
   assert.equal(products.length, 1);
@@ -806,72 +958,72 @@ test('Finestra mobile: rallentamento progressivo dalla soglia soft', async () =>
   const result = await sandbox({ entry: '../src/baseApi.js', action: async api => {
     for (let i = 0; i < 83; i++) await api.callBase('getInventories');
   } });
-  assert.deepEqual(result.waits, [67, 134, 200]);
-  assert.deepEqual(result.calls.slice(80).map(call => call.at), [67, 201, 401]);
+  assert.deepEqual(result.waits, [30, 60, 90]);
+  assert.deepEqual(result.calls.slice(80).map(call => call.at), [30, 90, 180]);
 });
 
-test('Finestra mobile: limite 90 rispettato anche con 200 richieste concorrenti', async () => {
+test('Finestra mobile: limite predefinito 100 rispettato anche con 200 richieste concorrenti', async () => {
   const result = await sandbox({ entry: '../src/baseApi.js', action: api =>
     Promise.all(Array.from({ length: 200 }, () => api.callBase('getInventories'))),
   });
   assert.equal(result.calls.length, 200);
-  assert.equal(result.calls[90].at, 60000);
+  assert.equal(result.calls[100].at, 60000);
   for (let index = 0; index < result.calls.length; index++) {
     const now = result.calls[index].at;
     const count = result.calls.slice(0, index + 1).filter(call => call.at > now - 60000).length;
-    assert.ok(count <= 90, `Superata soglia: ${count} a ${now}`);
+    assert.ok(count <= 100, `Superata soglia: ${count} a ${now}`);
   }
 });
 
-const smallWindow = { BASE_API_WINDOW_MS: '1000', BASE_API_SAFE_LIMIT: '4', BASE_API_SOFT_LIMIT: '2' };
+const smallLimit = { BASE_API_REQUESTS_PER_MINUTE: '4' };
 
 test('Finestra mobile: hard limit attende la scadenza piu vecchia e libera posti', async () => {
-  const result = await sandbox({ entry: '../src/baseApi.js', env: smallWindow, action: async api => {
+  const result = await sandbox({ entry: '../src/baseApi.js', env: smallLimit, action: async api => {
     for (let i = 0; i < 5; i++) await api.callBase('getInventories');
   } });
-  assert.deepEqual(result.calls.map(call => call.at), [0, 0, 125, 375, 1000]);
-  assert.deepEqual(result.waits, [125, 250, 625]);
+  assert.deepEqual(result.calls.map(call => call.at), [0, 0, 0, 15000, 60000]);
+  assert.deepEqual(result.waits, [15000, 45000]);
 });
 
 test('Finestra mobile: inattivita svuota la finestra, senza nuova attesa', async () => {
-  const result = await sandbox({ entry: '../src/baseApi.js', env: smallWindow,
+  const result = await sandbox({ entry: '../src/baseApi.js', env: smallLimit,
     action: async (api, clock) => {
       await api.callBase('getInventories');
-      clock.advance(200);
+      clock.advance(20000);
       await api.callBase('getInventories');
-      clock.advance(1000);
+      clock.advance(60000);
       await api.callBase('getInventories');
       await api.callBase('getInventories');
     },
   });
-  assert.deepEqual(result.calls.map(call => call.at), [0, 200, 1200, 1200]);
+  assert.deepEqual(result.calls.map(call => call.at), [0, 20000, 80000, 80000]);
   assert.deepEqual(result.waits, []);
 });
 
 test('Finestra mobile: latenza naturale gia sufficiente non aggiunge delay', async () => {
-  const result = await sandbox({ entry: '../src/baseApi.js', env: smallWindow,
+  const result = await sandbox({ entry: '../src/baseApi.js', env: smallLimit,
     action: async (api, clock) => {
       await api.callBase('getInventories');
       await api.callBase('getInventories');
-      clock.advance(200);
+      clock.advance(20000);
       await api.callBase('getInventories');
     },
   });
-  assert.deepEqual(result.calls.map(call => call.at), [0, 0, 200]);
+  assert.deepEqual(result.calls.map(call => call.at), [0, 0, 20000]);
   assert.deepEqual(result.waits, []);
 });
 
 test('Finestra mobile: retry contati come vere richieste e soglia hard rispettata', async () => {
   const result = await sandbox({ entry: '../src/baseApi.js',
-    env: { BASE_API_WINDOW_MS: '1000', BASE_API_SAFE_LIMIT: '1', BASE_API_SOFT_LIMIT: '0', BASE_API_RETRY_DELAY_MS: '10' },
+    env: { BASE_API_REQUESTS_PER_MINUTE: '1', BASE_API_RETRY_DELAY_MS: '10' },
     response: (method, parameters, calls) => calls.length === 1 ? { ok: false, status: 503 } : undefined,
     action: api => api.callBase('getInventories'),
   });
-  assert.deepEqual(result.calls.map(call => call.at), [0, 1000]);
+  assert.deepEqual(result.calls.map(call => call.at), [0, 60000]);
 });
 
 test('Finestra mobile: scritture e letture condividono lo stesso conteggio', async () => {
-  const result = await sandbox({ entry: '../src/baseApi.js', env: { ...smallWindow, DRY_RUN: 'false' },
+  const result = await sandbox({ entry: '../src/baseApi.js', env: { ...smallLimit, DRY_RUN: 'false' },
     action: async api => {
       await api.callBase('getInventories');
       await api.callBase('addInventoryCategory', { inventory_id: 10, name: 'Casa', parent_id: 0 });
@@ -880,11 +1032,11 @@ test('Finestra mobile: scritture e letture condividono lo stesso conteggio', asy
       await api.callBase('getInventoryManufacturers');
     },
   });
-  assert.deepEqual(result.calls.map(call => call.at), [0, 0, 125, 375, 1000]);
+  assert.deepEqual(result.calls.map(call => call.at), [0, 0, 0, 15000, 60000]);
 });
 
 test('Finestra mobile: DRY_RUN bloccato non occupa posti', async () => {
-  const result = await sandbox({ entry: '../src/baseApi.js', env: smallWindow,
+  const result = await sandbox({ entry: '../src/baseApi.js', env: smallLimit,
     action: async api => {
       for (let i = 0; i < 5; i++) await assert.rejects(api.callBase('addInventoryProduct', {}), /bloccata/);
       await api.callBase('getInventories');
@@ -897,7 +1049,7 @@ test('Finestra mobile: DRY_RUN bloccato non occupa posti', async () => {
 
 test('Finestra mobile: backoff reattivo prevale e pulisce i timestamp scaduti', async () => {
   const result = await sandbox({ entry: '../src/baseApi.js',
-    env: { ...smallWindow, BASE_API_RATE_LIMIT_DELAY_MS: '100' },
+    env: { ...smallLimit, BASE_API_RATE_LIMIT_DELAY_MS: '100' },
     response: (method, parameters, calls) => calls.length === 1
       ? { ok: false, status: 429, headers: { get: () => '5' } } : undefined,
     action: async api => {
@@ -909,16 +1061,30 @@ test('Finestra mobile: backoff reattivo prevale e pulisce i timestamp scaduti', 
   assert.deepEqual(result.waits, [5000]);
 });
 
-for (const env of [
-  { BASE_API_WINDOW_MS: '0' },
-  { BASE_API_SAFE_LIMIT: '0' },
-  { BASE_API_SOFT_LIMIT: '90' },
-  { BASE_API_SOFT_LIMIT: '91' },
-]) {
-  test('Finestra mobile: configurazione incoerente bloccata ' + JSON.stringify(env), async () => {
+for (const [raw, expected] of [[undefined, 100], ['', 100], ['100', 100], ['200', 200], ['500', 500], ['1', 1]]) {
+  test('Rate limiter: configurazione ' + JSON.stringify(raw) + ' produce ' + expected, async () => {
+    const env = raw === undefined ? {} : { BASE_API_REQUESTS_PER_MINUTE: raw };
+    const result = await sandbox({ entry: '../src/config.js', env,
+      action: config => assert.equal(config.getBaseApiRequestsPerMinute(), expected),
+    });
+    assert.equal(result.calls.length, 0);
+  });
+}
+
+for (const raw of ['abc', '0', '-1']) {
+  test('Rate limiter: valore non valido bloccato ' + JSON.stringify(raw), async () => {
+    const env = { BASE_API_REQUESTS_PER_MINUTE: raw };
     const result = await sandbox({ entry: '../src/baseApi.js', env,
       action: api => assert.rejects(api.callBase('getInventories'), /BASE_API_/),
     });
     assert.equal(result.calls.length, 0);
   });
 }
+
+test('Rate limiter: il limite configurato 200 viene applicato realmente', async () => {
+  const result = await sandbox({ entry: '../src/baseApi.js', env: { BASE_API_REQUESTS_PER_MINUTE: '200' },
+    action: api => Promise.all(Array.from({ length: 201 }, () => api.callBase('getInventories'))),
+  });
+  assert.equal(result.calls[199].at < 60000, true);
+  assert.equal(result.calls[200].at, 60000);
+});

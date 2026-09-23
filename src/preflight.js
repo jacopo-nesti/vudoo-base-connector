@@ -3,7 +3,7 @@ import { getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi
 import { getProducts, detectAndFilterDuplicates, normalizeProduct } from './products.js';
 import { log } from './logger.js';
 
-export async function runPreflightCheck() {
+export async function runPreflightCheck(catalog) {
   log('[PREFLIGHT] Avvio controlli preliminari...');
 
   // 1. Verifica token e flag di configurazione
@@ -15,21 +15,23 @@ export async function runPreflightCheck() {
     throw new Error('[PREFLIGHT] TEST_MODE e DRY_RUN devono essere impostati su "true" oppure "false".');
   }
 
-  // 2. Lettura e validazione struttura real_products.json
+  // 2. Lettura e validazione catalogo
   let rawProducts;
   try {
-    rawProducts = await getProducts();
+    rawProducts = catalog ? catalog.products : await getProducts();
   } catch (error) {
-    throw new Error(`[PREFLIGHT] Il file real_products.json non è presente o non è leggibile.\n👉 Esegui prima l'opzione 2 (Converti XML → JSON) per generare il file dal feed Vudoo.`);
+    throw new Error(`[PREFLIGHT] Il catalogo locale real_products.json non è presente o non è leggibile. Usa il flusso Vudoo remoto oppure esegui npm run convert per l'utility legacy.`);
   }
 
   if (!Array.isArray(rawProducts) || rawProducts.length === 0) {
-    throw new Error('[PREFLIGHT] real_products.json è vuoto o non contiene prodotti validi. Esegui la conversione XML → JSON (Opzione 2).');
+    throw new Error('[PREFLIGHT] Il catalogo è vuoto o non contiene prodotti validi.');
   }
 
   // 3. Selezione prodotti e filtro duplicati preliminare
   const candidates = testMode === 'true' ? rawProducts.slice(0, 1) : rawProducts;
-  const { uniqueProducts, duplicatesMap } = detectAndFilterDuplicates(candidates);
+  const deduplicated = catalog ?? detectAndFilterDuplicates(candidates);
+  const { duplicatesMap } = deduplicated;
+  const uniqueProducts = catalog && testMode === 'true' ? catalog.uniqueProducts.slice(0, 1) : deduplicated.uniqueProducts;
 
   let feedDuplicates = 0;
   if (duplicatesMap && typeof duplicatesMap.values === 'function') {
@@ -52,6 +54,7 @@ export async function runPreflightCheck() {
   // 5. Verifica Warehouse SOLO quando richiesto dallo stock dei prodotti
   let warehouse = null;
   const requiresWarehouse = uniqueProducts.some(product => {
+    if (catalog) return product.quantity != null;
     try {
       return normalizeProduct(product).quantity != null;
     } catch {
@@ -74,6 +77,7 @@ export async function runPreflightCheck() {
     warehouse,
     products: rawProducts,
     selectedProducts: uniqueProducts,
-    feedDuplicates
+    feedDuplicates,
+    normalizedProducts: Boolean(catalog)
   };
 }

@@ -5,13 +5,11 @@ Questo script permette di importare un catalogo prodotti da **Vudoo** a **Base.c
 ## Flusso attuale
 
 ```text
-Catalogo Vudoo (.xml)
+CLI → codiceAzienda
         ↓
-convert_xml_to_json.js
+Catalogo XML remoto
         ↓
-real_products.json
-        ↓
-Preflight e normalizzazione
+Parsing, normalizzazione e preflight in memoria
         ↓
 Confronto SKU → CREATE / UPDATE / SKIP
         ↓
@@ -241,233 +239,100 @@ deve invece rimanere nella repository.
 
 ---
 
-# 5. Scarica il catalogo da Vudoo
+# 5. Usa il catalogo remoto Vudoo
 
-Dal Panel Vudoo scarica il catalogo prodotti in formato:
-
-```text
-Google XML
-```
-
-Il file avrà estensione:
-
-```text
-.xml
-```
-
-Copia il file XML nella cartella principale del progetto.
-
-Esempio:
-
-```text
-vudoo-base-connector/
-│
-├── index.js
-├── convert_xml_to_json.js
-├── package.json
-├── .env
-├── .env.example
-└── VUDOO.xml
-```
-
-I file `.xml` sono esclusi dalla repository tramite `.gitignore`.
-
----
-
-# 6. Prepara il file XML da convertire
-
-Salva il feed nella root del progetto con il nome:
-
-```text
-VUDOO.xml
-```
-
-Non è necessario modificare il convertitore.
-
----
-
-# 7. Converti XML → JSON
-
-Dal terminale esegui:
+Avvia la CLI:
 
 ```bash
-npm run convert
+npm start
 ```
 
-Lo script genera automaticamente:
+Le operazioni sul catalogo remoto chiedono ogni volta il `codiceAzienda`. Il codice viene usato per la singola richiesta e non viene salvato.
+
+Il flusso principale recupera il catalogo XML da Vudoo, lo analizza e lo normalizza in memoria. Non richiede `VUDOO.xml` o `real_products.json`.
+
+---
+
+# 6. Verifica ambiente e configurazione
+
+Seleziona la voce `0` della CLI oppure esegui:
+
+```bash
+npm run check
+```
+
+Il controllo verifica configurazione, rate limiter e risorse Base.com tramite sole letture.
+
+---
+
+# 7. Preflight catalogo Vudoo
+
+Seleziona la voce `1`, quindi inserisci il codice azienda.
+
+Il preflight esegue:
 
 ```text
-real_products.json
+fetch XML remoto
+→ parsing e normalizzazione
+→ validazione e deduplicazione
+→ verifica inventory, price group e warehouse
+→ verifica Parameters e Additional Fields
 ```
 
-Questo è il file utilizzato successivamente dallo script principale.
-
-`real_products.json` è generato localmente ed è escluso dalla repository tramite `.gitignore`.
+Non crea o aggiorna prodotti.
 
 ---
 
-# 8. Controlla il JSON
+# 8. Sincronizza produttori
 
-Verifica che:
+La voce `2` recupera il catalogo remoto e sincronizza i produttori effettivamente presenti usando la logica Base.com condivisa.
 
-```text
-real_products.json
-```
-
-sia stato creato correttamente.
-
-Durante la conversione vengono applicate automaticamente alcune regole.
-
-## SKU e MPN
-
-L'`id` XML viene utilizzato come SKU e come MPN.
-
-Esempio:
-
-```json
-"id": "AZGXWGSS"
-```
-
-produce:
-
-```json
-"mpn": "AZGXWGSS"
-```
-
----
-
-## IVA
-
-Ogni prodotto riceve:
-
-```json
-"tax_rate": "22"
-```
-
----
-
-## Titolo
-
-Il brand viene aggiunto automaticamente alla fine del titolo.
-
-Da:
-
-```json
-"title": "Brezza di mare",
-"brand": "Wally 1925"
-```
-
-a:
-
-```json
-"title": "Brezza di mare - Wally 1925"
-```
+Con `DRY_RUN=true` le eventuali creazioni rimangono simulate.
 
 ---
 
 # 9. Primo test — Nessuna scrittura su Base.com
 
-Prima di effettuare un'importazione reale è consigliato utilizzare:
+Configura:
 
 ```env
 TEST_MODE=true
 DRY_RUN=true
 ```
 
-Esegui direttamente l'importazione in modalità sicura:
+Avvia `npm start`, scegli la voce `3` e inserisci il codice azienda.
 
-```bash
-npm run import
-```
-
-In questa configurazione:
-
-```text
-1 prodotto
-    ↓
-normalizzazione
-    ↓
-controllo SKU
-    ↓
-creazione payload
-    ↓
-NESSUNA scrittura su Base.com
-```
-
-Controlla che non vengano mostrati errori.
+Viene selezionato un prodotto dopo la validazione completa del catalogo; il payload viene costruito, ma nessuna scrittura viene inviata a Base.com.
 
 ---
 
-# 10. Secondo test — Importazione di un prodotto
+# 10. Importazione di un prodotto
 
-Se il test precedente è corretto, modifica `.env`:
+Dopo aver verificato il DRY_RUN, configura:
 
 ```env
 TEST_MODE=true
 DRY_RUN=false
 ```
 
-Poi esegui l'importazione diretta oppure usa l'opzione 4 della CLI:
-
-```bash
-npm run import
-```
-
-In questo modo viene processato realmente un solo prodotto.
-
-Il riepilogo sarà simile a:
-
-```text
-Prodotti letti: 157
-Prodotti selezionati: 1
-Prodotti processati: 1
-Creati: 1
-Aggiornati: 0
-Simulati: 0
-Errori: 0
-```
-
-Il numero di prodotti letti varia in base al catalogo.
-
-Dopo il test controlla il prodotto direttamente su Base.com.
-
-Verifica almeno:
-
-```text
-Titolo
-SKU
-EAN
-Prezzo
-Peso
-Descrizione
-Immagine
-```
+Avvia nuovamente la voce `3`. Viene elaborato realmente un solo prodotto.
 
 ---
 
 # 11. Importazione completa
 
-Quando il test sul singolo prodotto è corretto, modifica `.env`:
+Quando il test sul singolo prodotto è corretto, configura:
 
 ```env
 TEST_MODE=false
 DRY_RUN=false
 ```
 
-Poi esegui:
+La voce `3` elabora tutti i prodotti validi e deduplicati del catalogo remoto.
 
-```bash
-npm run import
-```
-
-Lo script processerà tutti i prodotti presenti in:
-
-```text
-real_products.json
-```
+Le utility locali precedenti restano disponibili in `tools/legacy/` tramite `npm run convert`, `npm run import`, `npm run productor` e `npm run sync`.
 
 ---
-
 # Controllo duplicati
 
 Prima di creare un prodotto, lo script controlla se lo stesso SKU è già presente nell'inventory Base.com selezionato.
