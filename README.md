@@ -207,6 +207,6 @@ Lo sviluppo è stato portato avanti con il supporto e i contributi del team di s
 
 - **Davide Baragli** — sviluppo e miglioramenti tecnici
 - **Leonardo Roschi** — sviluppo e attività di supporto
-- **Ian Cavini** — documentazione e contributi al progetto
+- **Ian Cavini** — sviluppo, documentazione e contributi al progetto
 - **Hudson (WoodTrue)** — sviluppo e attività di manutenzione
 - **Grecia** — sviluppo, test e attività di supporto
