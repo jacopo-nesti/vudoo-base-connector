@@ -275,11 +275,12 @@ Il preflight esegue:
 fetch XML remoto
 → parsing e normalizzazione
 → validazione e deduplicazione
+→ report e normalizzazione categorie canoniche
 → verifica inventory, price group e warehouse
 → verifica Parameters e Additional Fields
 ```
 
-Non crea o aggiorna prodotti.
+Non crea o aggiorna prodotti. Mostra tutte le categorie sorgente reali e quanti prodotti sono senza categoria. Un supplier non configurato produce una bozza in `config/suppliers/` e blocca l'import finché i mapping non sono completati. I prodotti senza categoria, inclusa `No name > No name`, sono sempre esclusi: quelli con `g:id` vengono registrati in `reports/no_name_products.json`, quelli senza `g:id` sono conteggiati separatamente. Le categorie reali senza mapping seguono `UNMAPPED_CATEGORY_POLICY`: `block` interrompe l'operazione, `skip` continua soltanto con i prodotti classificati e riporta gli esclusi. Consulta [Categorie canoniche](./category-mappings.md).
 
 ---
 

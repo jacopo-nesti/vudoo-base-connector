@@ -26,6 +26,8 @@ Il flusso principale recupera il catalogo XML remoto Vudoo, lo elabora in memori
 * **`src/products.js`**: lettura prodotti, normalizzazione, validazione, deduplicazione e costruzione dei payload;
 * **`src/preflight.js`**: controlli preliminari su configurazione, dati e risorse Base.com;
 * **`src/categories.js`**: recupero, associazione e creazione controllata delle categorie;
+* **`src/categoryNormalizer.js`**: validazione dei mapping, risoluzione supplier e conversione categoria sorgente → canonical → Base path;
+* **`src/noNameReport.js`**: registro locale cumulativo dei prodotti con categoria sorgente mancante, separato dalle categorie reali non mappate;
 * **`src/manufacturers.js`**: recupero, associazione e creazione controllata dei produttori;
 * **`src/productor.js`**: sincronizzazione separata dei produttori usando la logica condivisa;
 * **`src/converter.js`**: parsing XML e composizione del titolo condivisi dal runtime remoto e dal convertitore legacy;

@@ -31,9 +31,11 @@ export async function runOperation(name, codiceAzienda) {
     const test1 = fileURLToPath(new URL('../tests/integration-review.test.js', import.meta.url));
     const test2 = fileURLToPath(new URL('../tests/cli.test.js', import.meta.url));
     const test3 = fileURLToPath(new URL('../tests/vudoo-xml.test.js', import.meta.url));
+    const test4 = fileURLToPath(new URL('../tests/category-normalizer.test.js', import.meta.url));
+    const test5 = fileURLToPath(new URL('../tests/category-storage.test.js', import.meta.url));
 
     return await new Promise(resolve => {
-      const child = spawn(process.execPath, ['--experimental-vm-modules', '--test', test1, test2, test3], {
+      const child = spawn(process.execPath, ['--experimental-vm-modules', '--test', test1, test2, test3, test4, test5], {
         stdio: 'inherit',
         env: process.env,
         windowsHide: true

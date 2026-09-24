@@ -1,0 +1,128 @@
+{
+  "HAIR_CARE_CLEANING": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Cura dei capelli",
+      "Pulizia e Cura"
+    ]
+  },
+  "BODY_CREAM": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Cura del corpo",
+      "Creme"
+    ]
+  },
+  "FACE_BODY_CREAM": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Cura del corpo",
+      "Creme viso / corpo"
+    ]
+  },
+  "LEG_CARE": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Cura del corpo",
+      "Gambe"
+    ]
+  },
+  "CLEANSING_MILK": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Cura della Pelle",
+      "Latte Detergente"
+    ]
+  },
+  "INTIMATE_HYGIENE": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Igiene Personale",
+      "Igiene Intima"
+    ]
+  },
+  "SOAP_BATH": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Igiene Personale",
+      "Saponi, Bagnoschiuma"
+    ]
+  },
+  "BEARD_CARE": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Prodotti per uomo",
+      "Cura della Barba"
+    ]
+  },
+  "FRAGRANCE_ACCESSORIES": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Profumi",
+      "Accessori"
+    ]
+  },
+  "EAU_DE_COLOGNE": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Profumi",
+      "Acqua di Colonia"
+    ]
+  },
+  "PERSONAL_FRAGRANCE": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Profumi",
+      "Fragranze"
+    ]
+  },
+  "HOME_FRAGRANCE_CANDLE": {
+    "base_path": [
+      "Casa e Giardino",
+      "Essenze Ambiente",
+      "Candele"
+    ]
+  },
+  "HOME_FRAGRANCE_REED_DIFFUSER": {
+    "base_path": [
+      "Casa e Giardino",
+      "Essenze Ambiente",
+      "Profumatori Bastoncini"
+    ]
+  },
+  "HOME_FRAGRANCE_SOLID": {
+    "base_path": [
+      "Casa e Giardino",
+      "Essenze Ambiente",
+      "Profumatori Solidi"
+    ]
+  },
+  "HOME_FRAGRANCE_SPRAY": {
+    "base_path": [
+      "Casa e Giardino",
+      "Essenze Ambiente",
+      "Profumatori Spray"
+    ]
+  },
+  "FACE_CREAM": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Cura della Pelle",
+      "Creme Viso"
+    ]
+  },
+  "FACE_TONER": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Cura della Pelle",
+      "Tonico Viso"
+    ]
+  },
+  "DIETARY_SUPPLEMENTS": {
+    "base_path": [
+      "Bellezza e Salute",
+      "Farmaceutica",
+      "Integratori"
+    ]
+  }
+}

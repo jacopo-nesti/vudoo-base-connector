@@ -1,0 +1,41 @@
+{
+  "supplier_id": "MEI_SRL",
+  "source_titles": [
+    "Mei Srl"
+  ],
+  "categories": {
+    "Bellezza e Salute > Cosmetici > Make-Up Labbra": null,
+    "Bellezza e Salute > Cosmetici > Make-Up Viso": null,
+
+    "Bellezza e Salute > Cura dei capelli > Pulizia e Cura": "HAIR_CARE_CLEANING",
+    "Bellezza e Salute > Cura dei capelli > Trattamento Caduta": null,
+
+    "Bellezza e Salute > Cura del corpo": null,
+    "Bellezza e Salute > Cura del corpo > Abbigliamento": null,
+    "Bellezza e Salute > Cura del corpo > Creme": "BODY_CREAM",
+    "Bellezza e Salute > Cura del corpo > Creme viso / corpo": "FACE_BODY_CREAM",
+    "Bellezza e Salute > Cura del corpo > Gambe": "LEG_CARE",
+    "Bellezza e Salute > Cura del corpo > Prodotti Anticellulite": null,
+
+    "Bellezza e Salute > Cura della Pelle": null,
+    "Bellezza e Salute > Cura della Pelle > Creme Viso": "FACE_CREAM",
+    "Bellezza e Salute > Cura della Pelle > Latte Detergente": "CLEANSING_MILK",
+    "Bellezza e Salute > Cura della Pelle > Prodotti antietà": null,
+    "Bellezza e Salute > Cura della Pelle > Protezione Inquinamento": null,
+    "Bellezza e Salute > Cura della Pelle > Protezione Solare": null,
+    "Bellezza e Salute > Cura della Pelle > Tonico Viso": "FACE_TONER",
+
+    "Bellezza e Salute > Farmaceutica > Altri Prodotti": null,
+    "Bellezza e Salute > Farmaceutica > Integratori": "DIETARY_SUPPLEMENTS",
+    "Bellezza e Salute > Farmaceutica > Prodotti Dimagranti": null,
+    "Bellezza e Salute > Farmaceutica > Prodotti erboristici": null,
+
+    "Bellezza e Salute > Igiene Personale > Deodoranti, Talco": null,
+    "Bellezza e Salute > Igiene Personale > Saponi, Bagnoschiuma": "SOAP_BATH",
+
+    "Bellezza e Salute > Salute e cura della persona > Alimentazione e nutrizione": null,
+
+    "Casa e Giardino > Essenze Ambiente > Profumatori Bastoncini": "HOME_FRAGRANCE_REED_DIFFUSER",
+    "Casa e Giardino > Essenze Ambiente > Profumatori Spray": "HOME_FRAGRANCE_SPRAY"
+  }
+}

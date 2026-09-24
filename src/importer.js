@@ -51,8 +51,8 @@ export async function runImport(prepared) {
     selectedCount = selected.length;
 
     // Recupero mappe Categorie e Produttori
-    const mfgMap = await getManufacturerMap();
-    const categoryMap = selected.some(product => product?.product_type)
+    const mfgMap = selected.length > 0 ? await getManufacturerMap() : new Map();
+    const categoryMap = selected.length > 0 && selected.some(product => product?.base_category_path?.length || product?.product_type)
       ? await getCategoryMap(config.inventory.inventory_id)
       : new Map();
 
@@ -74,14 +74,16 @@ export async function runImport(prepared) {
         }
         if (existingDetails) assertVudooSkuCompatibility(product, existingDetails);
 
-        const categoryId = await ensureCategoryPath(product.product_type, config.inventory.inventory_id, categoryMap);
+        const categoryPath = product.base_category_path ?? product.product_type;
+        const categoryId = await ensureCategoryPath(categoryPath, config.inventory.inventory_id, categoryMap);
         const manufacturerId = await ensureManufacturer(product.brand, mfgMap);
 
         if (categoryId != null) product.category_id = categoryId;
         if (manufacturerId != null) product.manufacturer_id = manufacturerId;
 
         const pendingReferences = dryRun === 'true' &&
-          ((product.product_type?.trim() && categoryId == null) || (product.brand?.trim() && manufacturerId == null));
+          (((Array.isArray(categoryPath) ? categoryPath.length > 0 : categoryPath?.trim()) && categoryId == null)
+            || (product.brand?.trim() && manufacturerId == null));
 
         if (existingProduct) {
           if (hasProductChanged(product, existingDetails, config)) {
@@ -132,6 +134,22 @@ export async function runImport(prepared) {
     log(`Gruppo prezzi: ${priceGroup ? `${priceGroup.name} (${priceGroup.price_group_id}, ${priceGroup.currency})` : 'non selezionato'}`);
     log(`Warehouse: ${warehouse ? `${warehouse.name} (${warehouse.id})` : warehouseStatus}`);
     log(`Prodotti letti: ${read}\nProdotti selezionati: ${selectedCount}\nProdotti processati: ${processed}\nCreati: ${created}\nAggiornati: ${updated}\nSaltati perché invariati: ${skipped}\nDuplicati nel feed saltati: ${feedDuplicates}\nSimulati: ${simulated}\nErrori: ${errors}`);
+    if (preflightData?.categoryAnalysis) {
+      const categories = preflightData.categoryAnalysis;
+      log(`Prodotti totali feed: ${categories.totalProducts}`);
+      log(`Prodotti importabili: ${categories.importableProducts}`);
+      log(`Prodotti esclusi per categoria sorgente mancante: ${categories.missingSourceCategoryProducts}`);
+      log(`Prodotti senza categoria non registrabili (g:id mancante): ${categories.missingSourceCategoryUnrecordableProducts}`);
+      log(`Esclusi categoria non mappata: ${categories.unmappedValidCategoryProducts}`);
+      log(`Categorie reali non mappate: ${categories.unmappedCount}`);
+      for (const entry of categories.entries.filter(entry => !entry.mapped)) {
+        log(`${entry.sourceCategory} → ${entry.count} prodotti esclusi`);
+      }
+      if (categories.missingSourceCategoryProducts > categories.missingSourceCategoryUnrecordableProducts) {
+        log('Prodotti senza categoria registrati in: reports/no_name_products.json');
+      }
+    }
+    if (preflightData?.eanWarningsCount) log(`EAN non validi omessi: ${preflightData.eanWarningsCount}`);
     if (errorSkus.length) log(`SKU con errori: ${errorSkus.join(', ')}`);
     log(`Esiti incerti: ${uncertainSkus.length}`);
     if (uncertainSkus.length) log(`SKU con esito incerto: ${uncertainSkus.join(', ')}`);

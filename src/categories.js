@@ -26,9 +26,14 @@ export async function getCategoryMap(inventoryId) {
 
 export async function ensureCategoryPath(productType, inventoryId, categories) {
   if (productType == null || productType === '') return null;
-  if (typeof productType !== 'string') throw new Error('product_type deve essere una stringa.');
-  if (!productType.trim()) return null;
-  const parts = productType.split('>').map(cleanName);
+  if (!Array.isArray(productType) && typeof productType !== 'string') {
+    throw new Error('Il percorso categoria deve essere una stringa o un array.');
+  }
+  if (typeof productType === 'string' && !productType.trim()) return null;
+  const parts = (Array.isArray(productType) ? productType : productType.split('>')).map(part => {
+    if (typeof part !== 'string') throw new Error('Percorso categorie con livello non testuale.');
+    return cleanName(part);
+  });
   if (parts.some(name => !name)) throw new Error('Percorso categorie con livello vuoto.');
   let parent = 0;
   for (const name of parts) {

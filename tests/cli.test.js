@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { cp, mkdtemp, rm, symlink, writeFile, readFile } from 'node:fs/promises';
+import { cp, mkdtemp, rm, symlink, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
+import { categoryMappings } from './fixtures/vudoo.js';
 
 const root = process.cwd();
 const runtimeFiles = ['cli.js', 'check.js', 'src', 'tools', 'package.json'];
@@ -29,6 +30,10 @@ async function createFixture({ legacyCatalog = false } = {}) {
       await cp(join(root, file), join(directory, file), { recursive: true });
     }
     await symlink(join(root, 'node_modules'), join(directory, 'node_modules'), 'junction');
+    await mkdir(join(directory, 'config', 'suppliers'), { recursive: true });
+    await writeFile(join(directory, 'config', 'canonical-categories.json'), JSON.stringify(categoryMappings.canonical, null, 2), 'utf8');
+    await writeFile(join(directory, 'config', 'suppliers', 'test-supplier.json'),
+      JSON.stringify({ supplier_id: 'TEST_SUPPLIER', ...categoryMappings.suppliers.TEST_SUPPLIER }, null, 2), 'utf8');
     if (legacyCatalog) await writeFile(join(directory, 'VUDOO.xml'), validXml, 'utf8');
     return directory;
   } catch (error) {

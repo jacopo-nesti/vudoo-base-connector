@@ -3,6 +3,7 @@ real_products.json
 .env
 node_modules/
 *.log
+reports/no_name_products.json
 .DS_Store
 *.vs
 .history/

@@ -1,4 +1,4 @@
-import { token, testMode, dryRun, getBaseApiRequestsPerMinute } from './config.js';
+import { token, testMode, dryRun, getBaseApiRequestsPerMinute, getUnmappedCategoryPolicy } from './config.js';
 import { log } from './logger.js';
 import { getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi.js';
 
@@ -32,6 +32,12 @@ export async function runEnvironmentCheck() {
     report('Rate limiter Base.com', true, `${getBaseApiRequestsPerMinute()} richieste/minuto`);
   } catch (error) {
     report('Rate limiter Base.com', false, error.message);
+  }
+
+  try {
+    report('Categorie non mappate', true, getUnmappedCategoryPolicy().toUpperCase());
+  } catch (error) {
+    report('Categorie non mappate', false, error.message);
   }
 
   // 2. Connessione API Base.com, Inventory, Price Group e Warehouse

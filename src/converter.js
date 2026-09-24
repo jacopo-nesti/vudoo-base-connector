@@ -10,7 +10,7 @@ export function formatProductTitle(title, ...parts) {
   return title.endsWith(suffix) ? title : title + suffix;
 }
 
-export function parseCatalogXml(xml) {
+export function parseCatalog(xml) {
   if (typeof xml !== 'string' || !xml.trim()) throw new Error('Catalogo XML vuoto.');
   if (/<!DOCTYPE/i.test(xml)) throw new Error('Catalogo XML: DOCTYPE/HTML non supportato.');
   const validation = XMLValidator.validate(xml);
@@ -28,12 +28,20 @@ export function parseCatalogXml(xml) {
     tagValueProcessor: (name, value, path, attributes, isLeaf) =>
       !isLeaf && value.trim() === '' ? '' : value,
   });
-  const products = parser.parse(xml).rss?.channel?.item;
+  const channel = parser.parse(xml).rss?.channel;
+  const products = channel?.item;
   if (!Array.isArray(products) || products.length === 0) {
     throw new Error('Catalogo vuoto o struttura non valida: nessun item in rss.channel.item.');
   }
   if (products.some(product => !product || typeof product !== 'object' || Array.isArray(product))) {
     throw new Error('Catalogo XML: item non valido.');
   }
-  return products;
+  return {
+    channelTitle: typeof channel.title === 'string' ? channel.title : undefined,
+    products,
+  };
+}
+
+export function parseCatalogXml(xml) {
+  return parseCatalog(xml).products;
 }
