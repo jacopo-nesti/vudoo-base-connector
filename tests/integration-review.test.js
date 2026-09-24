@@ -410,6 +410,42 @@ test('Supplier esistente: mix mapped/null/no-name mantiene conteggi distinti', a
   assert.deepEqual(JSON.parse(report[1]).map(product => product.id), ['SKU-NO-NAME']);
 });
 
+test('Hardening: feed misto esclude categorie non importabili, avverte per EAN e conserva stock zero', async () => {
+  const valid = categorizedItem('SKU-VALID', 'Categoria A')
+    .replace('<g:id>SKU-VALID</g:id>', '<g:id>SKU-VALID</g:id><g:ean>8056370403714-</g:ean>')
+    .replace('<g:quantity>234</g:quantity>', '<g:quantity>0</g:quantity>');
+  const xml = catalogXml([
+    valid,
+    categorizedItem('SKU-NO-NAME', 'No name > No name', 'Brand Escluso'),
+    categorizedItem('SKU-UNMAPPED', 'Categoria non configurata', 'Brand Escluso'),
+    categorizedItem('SKU-SECOND', 'Categoria B'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false', UNMAPPED_CATEGORY_POLICY: 'skip' },
+    categories: [
+      { category_id: 70, parent_id: 0, name: 'Categoria Mappata A' },
+      { category_id: 71, parent_id: 0, name: 'Categoria Mappata B' },
+    ],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.deepEqual(creates.map(call => call.parameters.sku), ['SKU-VALID', 'SKU-SECOND']);
+  assert.equal(creates[0].parameters.stock.bl_30, 0);
+  assert.equal(creates[0].parameters.ean, undefined);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), false);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
+  for (const line of [
+    'Prodotti totali feed: 4', 'Prodotti importabili: 2',
+    'Prodotti esclusi per categoria sorgente mancante: 1',
+    'Esclusi categoria non mappata: 1', 'Categorie reali non mappate: 1',
+    'EAN non validi omessi: 1', 'Creati: 2', 'Saltati perché invariati: 0',
+  ]) assert.ok(result.logs.some(log => log.includes(line)), line);
+});
+
 test('XML remoto: Base vuota crea esclusivamente il percorso canonico completo', async () => {
   const result = await remoteSandbox({
     env: { DRY_RUN: 'false' },
