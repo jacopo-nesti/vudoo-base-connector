@@ -305,13 +305,47 @@ test('Nuovo supplier: genera bozza solo con categorie reali e ferma import prima
     xml,
     categoryMappings: { canonical: partialCategoryMappings.canonical, suppliers: {} },
     env: { UNMAPPED_CATEGORY_POLICY: 'skip' },
-    action: api => assert.rejects(api.importVudooCatalog('test-company'), /config\/suppliers\/pippo-spa\.json/),
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
+      error.message.includes('config/suppliers/pippo-spa.json') &&
+      error.message.includes('Categorie reali trovate: 1') &&
+      error.message.includes('Auto-mappate con certezza: 0') &&
+      error.message.includes('Da configurare manualmente: 1')),
   });
   assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
   const draft = [...result.writes].find(([filename]) => filename.endsWith('pippo-spa.json'));
   assert.ok(draft);
   assert.deepEqual(JSON.parse(draft[1]).categories, { PARFUM: null });
   assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 1')));
+});
+
+test('Nuovo supplier: scaffold auto-mappa solo match sicuri e blocca comunque prima di Base', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-APPROVED', 'Categoria A'),
+    categorizedItem('SKU-CANONICAL', ' categoria mappata B '),
+    categorizedItem('SKU-MANUAL', 'Categoria ignota'),
+    categorizedItem('SKU-NO-NAME', 'No name > No name'),
+  ].join('')).replace('<title>Test Supplier</title>', '<title>Nuovo Fornitore</title>');
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { UNMAPPED_CATEGORY_POLICY: 'skip', DRY_RUN: 'false' },
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
+      error.message.includes('Categorie reali trovate: 3') &&
+      error.message.includes('Auto-mappate con certezza: 2') &&
+      error.message.includes('supplier: 1, base_path canonico: 1') &&
+      error.message.includes('Da configurare manualmente: 1') &&
+      error.message.includes('config/suppliers/nuovo-fornitore.json')),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  const draft = [...result.writes].find(([filename]) => filename.endsWith('nuovo-fornitore.json'));
+  assert.ok(draft);
+  assert.deepEqual(JSON.parse(draft[1]).categories, {
+    'Categoria A': 'MAPPED_A',
+    ' categoria mappata B ': 'MAPPED_B',
+    'Categoria ignota': null,
+  });
 });
 
 test('Supplier esistente: nuova categoria reale espone conteggio, policy e file da aggiornare', async () => {

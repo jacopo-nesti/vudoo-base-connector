@@ -47,7 +47,11 @@ export async function preflightVudooCatalog(codiceAzienda) {
       const recorded = await recordNoNameProducts(categories.missingProducts, draft.draft.supplier_id, catalog.channelTitle);
       if (recorded) log(`Prodotti senza categoria registrati in: ${noNameReportPath}`);
     }
-    throw new Error(`IMPORT BLOCCATO: nuovo supplier "${catalog.channelTitle}". ${draft.created ? 'Bozza generata' : 'Bozza già presente'}: ${draft.file}. Categorie da configurare: ${categories.entries.length}. Compila i mapping verso categorie canoniche e ripeti il preflight.`);
+    if (!draft.created) {
+      throw new Error(`IMPORT BLOCCATO: nuovo supplier "${catalog.channelTitle}". File già presente e non modificato: ${draft.file}. Verifica i mapping e ripeti il preflight.`);
+    }
+    const autoMapped = draft.stats.supplier + draft.stats.canonical;
+    throw new Error(`IMPORT BLOCCATO: nuovo supplier "${catalog.channelTitle}".\nCategorie reali trovate: ${Object.keys(draft.draft.categories).length}\nAuto-mappate con certezza: ${autoMapped} (supplier: ${draft.stats.supplier}, base_path canonico: ${draft.stats.canonical})\nDa configurare manualmente: ${draft.stats.manual}\nFile creato: ${draft.file}\nVerifica i mapping, completa quelli null e ripeti il preflight.`);
   }
 
   if (categories.missingProducts.length) {
