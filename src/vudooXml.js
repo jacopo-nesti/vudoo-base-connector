@@ -1,5 +1,6 @@
-import { parseCatalogXml, formatProductTitle } from './converter.js';
+import { parseCatalog, formatProductTitle } from './converter.js';
 import { normalizeProduct, detectAndFilterDuplicates } from './products.js';
+import { isMissingSourceCategory } from './categoryNormalizer.js';
 
 const endpoint = 'https://www.vudoo.org/ProductCatalog.ashx';
 const defaults = Object.freeze({ idCategoria: '', disponibili: true, lingua: 1, listino: 6, risultati: 500 });
@@ -45,6 +46,11 @@ function numericField(value, field) {
   return number;
 }
 
+function invalidSourceEan(value) {
+  if (value == null || (typeof value === 'string' && !value.trim())) return false;
+  return typeof value !== 'string' || !/^\d{8,14}$/.test(value);
+}
+
 export function normalizeVudooProduct(source) {
   const input = { ...source };
   for (const [field, value] of Object.entries(input)) {
@@ -59,6 +65,7 @@ export function normalizeVudooProduct(source) {
     if (typeof input[field] !== 'string') throw new Error(`${field} deve essere una stringa.`);
     input[field] = input[field].trim();
   }
+  if (invalidSourceEan(source.ean)) delete input.ean;
   const vudooSku = input.sku;
   const product = normalizeProduct(input);
   product.source = source;
@@ -110,15 +117,31 @@ export function normalizeVudooProduct(source) {
   return product;
 }
 
-export function prepareVudooCatalog(xml) {
-  const sources = parseCatalogXml(xml);
+export function prepareVudooCatalog(xml, { skipMissingSourceCategory = false } = {}) {
+  const { channelTitle, products: sources } = parseCatalog(xml);
+  const eanWarnings = [];
   const products = sources.map((source, index) => {
     try {
-      return normalizeVudooProduct(source);
+      if (skipMissingSourceCategory && isMissingSourceCategory(source.product_type)) {
+        return {
+          id: source.id,
+          vudoo_sku: source.sku,
+          original_title: source.title,
+          product_type: source.product_type,
+          source,
+        };
+      }
+      const product = normalizeVudooProduct(source);
+      if (invalidSourceEan(source.ean)) {
+        eanWarnings.push({ id: source.id, sku: source.sku, title: source.title, originalEan: source.ean });
+      }
+      return product;
     } catch (error) {
       throw new Error(`Catalogo Vudoo, record ${index + 1}: ${error.message}`);
     }
   });
-  const deduplicated = detectAndFilterDuplicates(products);
-  return { sources, products, ...deduplicated };
+  const deduplicated = detectAndFilterDuplicates(skipMissingSourceCategory
+    ? products.filter(product => !isMissingSourceCategory(product.product_type))
+    : products);
+  return { channelTitle, sources, products, eanWarnings, ...deduplicated };
 }

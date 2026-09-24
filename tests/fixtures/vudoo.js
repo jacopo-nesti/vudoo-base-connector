@@ -17,8 +17,22 @@ export const itemXml = `<item>
 </item>`;
 
 export function catalogXml(items = itemXml) {
-  return `<rss xmlns:g="http://base.google.com/ns/1.0"><channel>${items}</channel></rss>`;
+  return `<rss xmlns:g="http://base.google.com/ns/1.0"><channel><title>Test Supplier</title>${items}</channel></rss>`;
 }
+
+export const categoryMappings = {
+  canonical: {
+    TEST_BEER: { base_path: ['Vini, Gastronomia', 'Birra', 'Birra Artigianale'] },
+  },
+  suppliers: {
+    TEST_SUPPLIER: {
+      source_titles: ['Test Supplier'],
+      categories: {
+        'Vini, Gastronomia > Birra > Birra Artigianale': 'TEST_BEER',
+      },
+    },
+  },
+};
 
 export const extraFields = [
   'Vudoo Sale Price', 'Vudoo Product URL', 'Vudoo Original Title', 'Shipping Country',

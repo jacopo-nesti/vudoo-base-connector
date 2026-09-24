@@ -1,0 +1,23 @@
+{
+  "supplier_id": "WALLY_1925",
+  "source_titles": [
+    "Wally 1925"
+  ],
+  "categories": {
+    "Bellezza e Salute > Cura dei capelli > Pulizia e Cura": "HAIR_CARE_CLEANING",
+    "Bellezza e Salute > Cura del corpo > Creme": "BODY_CREAM",
+    "Bellezza e Salute > Cura del corpo > Creme viso / corpo": "FACE_BODY_CREAM",
+    "Bellezza e Salute > Cura del corpo > Gambe": "LEG_CARE",
+    "Bellezza e Salute > Cura della Pelle > Latte Detergente": "CLEANSING_MILK",
+    "Bellezza e Salute > Igiene Personale > Igiene Intima": "INTIMATE_HYGIENE",
+    "Bellezza e Salute > Igiene Personale > Saponi, Bagnoschiuma": "SOAP_BATH",
+    "Bellezza e Salute > Prodotti per uomo > Cura della Barba": "BEARD_CARE",
+    "Bellezza e Salute > Profumi > Accessori": "FRAGRANCE_ACCESSORIES",
+    "Bellezza e Salute > Profumi > Acqua di Colonia": "EAU_DE_COLOGNE",
+    "Bellezza e Salute > Profumi > Fragranze": "PERSONAL_FRAGRANCE",
+    "Casa e Giardino > Essenze Ambiente > Candele": "HOME_FRAGRANCE_CANDLE",
+    "Casa e Giardino > Essenze Ambiente > Profumatori Bastoncini": "HOME_FRAGRANCE_REED_DIFFUSER",
+    "Casa e Giardino > Essenze Ambiente > Profumatori Solidi": "HOME_FRAGRANCE_SOLID",
+    "Casa e Giardino > Essenze Ambiente > Profumatori Spray": "HOME_FRAGRANCE_SPRAY"
+  }
+}

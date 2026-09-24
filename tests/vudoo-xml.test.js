@@ -12,6 +12,27 @@ const config = {
 };
 const full = () => prepareVudooCatalog(catalogXml()).products[0];
 
+for (const [label, category] of [
+  ['assente', null], ['vuota', '  '], ['No name', 'No name > No name'],
+]) {
+  test(`Vudoo XML: categoria ${label} senza g:id è escludibile senza bloccare il catalogo`, () => {
+    const skipped = itemXml.replace('<g:id>389578</g:id>', '')
+      .replace(/<g:product_type>.*?<\/g:product_type>/,
+        category === null ? '' : `<g:product_type>${category}</g:product_type>`)
+      .replace('<g:price>3.20 EUR</g:price>', '<g:price>non valido</g:price>');
+    const catalog = prepareVudooCatalog(catalogXml(skipped), { skipMissingSourceCategory: true });
+    assert.equal(catalog.products.length, 1);
+    assert.equal(catalog.uniqueProducts.length, 0);
+    assert.equal(catalog.products[0].id, undefined);
+  });
+}
+
+test('Vudoo XML: g:id resta obbligatorio per prodotti con categoria reale', () => {
+  const source = itemXml.replace('<g:id>389578</g:id>', '');
+  assert.throws(() => prepareVudooCatalog(catalogXml(source),
+    { skipMissingSourceCategory: true }), /SKU mancante/);
+});
+
 test('Vudoo XML: URL fisso, codice stringa con trim ed escaping, default centralizzati', () => {
   const url = buildVudooCatalogUrl('  azienda fittizia & ?  ');
   assert.equal(url.origin + url.pathname, 'https://www.vudoo.org/ProductCatalog.ashx');
@@ -275,6 +296,41 @@ test('Vudoo XML: EAN assente resta opzionale e non viene inventato', () => {
   const product = normalizeVudooProduct({ ...source, sku: 'CHISBZWV' });
   assert.equal(product.ean, undefined);
   assert.equal(buildBasePayload(product, config).ean, undefined);
+});
+
+test('Vudoo XML: EAN valido viene conservato nel payload Base', () => {
+  const product = normalizeVudooProduct({ ...source, ean: '8009513003852' });
+  assert.equal(product.ean, '8009513003852');
+  assert.equal(buildBasePayload(product, config).ean, '8009513003852');
+});
+
+test('Vudoo XML: EAN vuoto viene omesso senza warning', () => {
+  for (const ean of ['', '   ']) {
+    const xml = catalogXml(itemXml.replace('<g:id>389578</g:id>', `<g:id>389578</g:id><g:ean>${ean}</g:ean>`));
+    const catalog = prepareVudooCatalog(xml);
+    assert.equal(catalog.products[0].ean, undefined);
+    assert.equal(buildBasePayload(catalog.products[0], config).ean, undefined);
+    assert.deepEqual(catalog.eanWarnings, []);
+  }
+});
+
+test('Vudoo XML: EAN malformato viene omesso e registrato senza alterare il valore originale', () => {
+  for (const ean of ['8056370403714-', ' 8009513003852 ']) {
+    const xml = catalogXml(itemXml.replace('<g:id>389578</g:id>', `<g:id>389578</g:id><g:ean>${ean}</g:ean>`));
+    const catalog = prepareVudooCatalog(xml);
+    const product = catalog.products[0];
+    assert.equal(catalog.uniqueProducts.length, 1);
+    assert.equal(product.ean, undefined);
+    assert.equal(product.source.ean, ean);
+    assert.equal(buildBasePayload(product, config).ean, undefined);
+    assert.deepEqual(catalog.eanWarnings, [{ id: '389578', sku: 'HKZDVHCW', title: 'Prodotto test', originalEan: ean }]);
+  }
+});
+
+test('Vudoo XML: EAN malformato non cancella un EAN già presente su Base', () => {
+  const product = normalizeVudooProduct({ ...source, ean: '8056370403714-' });
+  const existing = { ...buildBasePayload(product, config), sku: product.sku, ean: '8009513003852' };
+  assert.equal(buildBaseUpdatePayload(product, existing, config)?.ean, undefined);
 });
 
 for (const invalid of [

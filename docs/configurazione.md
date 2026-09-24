@@ -8,7 +8,8 @@ Il comportamento dell'applicazione viene configurato tramite le variabili d'ambi
 * **`BASE_INVENTORY_ID`**: inventory da usare quando si desidera una selezione esplicita. Se assente, il progetto richiede un inventory predefinito identificabile in modo univoco;
 * **`BASE_WAREHOUSE_ID`**: warehouse da usare per lo stock quando è necessaria una selezione esplicita. Il valore viene verificato rispetto all'inventory selezionato;
 * **`DRY_RUN`**: con `true` blocca tutte le scritture verso Base.com;
-* **`TEST_MODE`**: con `true` limita l'elaborazione al primo prodotto selezionato.
+* **`TEST_MODE`**: con `true` limita l'elaborazione al primo prodotto selezionato;
+* **`UNMAPPED_CATEGORY_POLICY`**: `block` (predefinito) blocca il catalogo se manca il mapping di una categoria sorgente reale; `skip` importa soltanto i prodotti mappati. I prodotti con categoria assente, vuota o `No name > No name` sono sempre esclusi, indipendentemente dalla policy. Quelli con `g:id` sono registrati in `reports/no_name_products.json`; quelli senza `g:id` sono conteggiati separatamente.
 
 ## Protezione delle API
 

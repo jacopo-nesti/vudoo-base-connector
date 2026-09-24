@@ -98,6 +98,7 @@ vudoo-base-connector/
 * **`src/products.js`**: lettura JSON, normalizzazione, validazione, deduplicazione e payload prodotti;
 * **`src/preflight.js`**: controlli preliminari prima dell'importazione;
 * **`src/categories.js`** e **`src/manufacturers.js`**: associazione e creazione controllata di categorie e produttori;
+* **`src/categoryNormalizer.js`**: risoluzione del supplier da `channel.title` e mapping categoria sorgente → canonical → Base path;
 * **`src/converter.js`**: parsing XML e composizione del titolo condivisi;
 * **`src/vudooXml.js`** e **`src/vudooImport.js`**: fetch, parsing, normalizzazione e orchestrazione del catalogo remoto Vudoo;
 * **`src/operations.js`**: operazioni condivise dalla CLI;
@@ -114,6 +115,8 @@ Normalizzazione e validazione prodotti
     ↓
 Deduplicazione feed e ricerca SKU nell'inventory selezionato
     ↓
+Normalizzazione categorie e report completo
+    ↓
 Preflight: configurazione, metadati, inventory, price group e warehouse
     ↓
 Confronto con Base.com
@@ -122,6 +125,14 @@ CREATE / UPDATE selettivo / SKIP
     ↓
 Report finale
 ```
+
+### 🗂️ Categorie canoniche
+
+`config/canonical-categories.json` definisce i percorsi Base delle categorie canoniche. I file in `config/suppliers/` associano i titoli pubblici dei feed ai profili fornitore e traducono le categorie sorgente in categorie canoniche. Un nuovo fornitore rilevato nel preflight riceve una bozza di configurazione da completare prima dell'import.
+
+Il preflight elenca tutte le categorie sorgente reali e i relativi conteggi. I prodotti senza categoria, inclusa `No name > No name`, sono sempre esclusi; quelli con `g:id` vengono registrati in `reports/no_name_products.json`, mentre quelli senza `g:id` sono conteggiati separatamente senza bloccare l'import. Per le categorie reali senza mapping, `UNMAPPED_CATEGORY_POLICY=block` mantiene il blocco sicuro predefinito, mentre `skip` importa soltanto i prodotti classificati e riporta separatamente quelli esclusi. Quando il mapping è disponibile, i livelli Base mancanti vengono creati dalla logica gerarchica esistente. Le associazioni marketplace continuano a essere configurate direttamente in Base.com.
+
+Consulta [Categorie canoniche](./docs/category-mappings.md) per aggiungere supplier e mapping senza usare o salvare il codice azienda.
 
 ### 🛡️ Regole di Sicurezza, Validazione e Ottimizzazione
 
@@ -180,12 +191,13 @@ Esegui la suite configurata con:
 npm test
 ```
 
-La suite corrente comprende **243 test** dedicati a CLI, parsing, normalizzazione, stock, payload, CREATE/UPDATE/SKIP, DRY_RUN, categorie, produttori, duplicati, Unicode, rate limiting ed esiti incerti.
+La suite corrente comprende **300 test** dedicati a CLI, parsing, normalizzazione, stock, payload, CREATE/UPDATE/SKIP, DRY_RUN, categorie, produttori, duplicati, Unicode, rate limiting ed esiti incerti.
 
 ## 📚 Link alla Documentazione Secondaria
 
 * [Guida operativa](./docs/GUIDA.md)
 * [Configurazione](./docs/configurazione.md)
+* [Categorie canoniche](./docs/category-mappings.md)
 * [Modalità CLI](./docs/cli-modalita.md)
 * [Architettura del progetto](./docs/architettura.md)
 * [Roadmap](./docs/ROADMAP.md)

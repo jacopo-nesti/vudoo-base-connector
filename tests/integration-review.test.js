@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import * as xml from 'fast-xml-parser';
-import { catalogXml, itemXml, extraFields, parameters as fieldParameters, parameterGroups } from './fixtures/vudoo.js';
+import { catalogXml, itemXml, extraFields, parameters as fieldParameters, parameterGroups, categoryMappings } from './fixtures/vudoo.js';
 import { normalizeVudooProduct } from '../src/vudooXml.js';
 import { parseCatalogXml } from '../src/converter.js';
 import { parseFeedNumber, normalizeProduct, buildBasePayload, buildBaseUpdatePayload, detectAndFilterDuplicates, sanitizeTextForBase } from '../src/products.js';
@@ -21,6 +21,496 @@ async function remoteSandbox(options = {}, expectedError) {
     },
   });
 }
+
+const canonicalCategoryMappings = {
+  canonical: {
+    TEST_CANONICAL: { base_path: ['Categoria Canonica', 'Foglia Canonica'] },
+  },
+  suppliers: {
+    TEST_SUPPLIER: {
+      source_titles: ['Test Supplier'],
+      categories: {
+        'Vini, Gastronomia > Birra > Birra Artigianale': 'TEST_CANONICAL',
+      },
+    },
+  },
+};
+
+const partialCategoryMappings = {
+  canonical: {
+    MAPPED_A: { base_path: ['Categoria Mappata A'] },
+    MAPPED_B: { base_path: ['Categoria Mappata B'] },
+  },
+  suppliers: {
+    TEST_SUPPLIER: {
+      source_titles: ['Test Supplier'],
+      categories: { 'Categoria A': 'MAPPED_A', 'Categoria B': 'MAPPED_B' },
+    },
+  },
+};
+
+const categoryMappingsWithNull = {
+  canonical: partialCategoryMappings.canonical,
+  suppliers: { TEST_SUPPLIER: {
+    source_titles: ['Test Supplier'],
+    categories: { 'Categoria A': 'MAPPED_A', 'Categoria Non Risolta': null },
+  } },
+};
+
+function categorizedItem(id, category, brand = 'Marca') {
+  return itemXml
+    .replace('<g:id>389578</g:id>', `<g:id>${id}</g:id>`)
+    .replace('<g:brand>Marca</g:brand>', `<g:brand>${brand}</g:brand>`)
+    .replace(/<g:product_type>.*?<\/g:product_type>/, `<g:product_type>${category}</g:product_type>`);
+}
+
+test('XML remoto: categoria non mappata mostra il riepilogo completo e blocca prima di Base', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    categoryMappings: {
+      canonical: canonicalCategoryMappings.canonical,
+      suppliers: {
+        TEST_SUPPLIER: { source_titles: ['Test Supplier'], categories: {} },
+      },
+    },
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), /IMPORT BLOCCATO/),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  assert.ok(result.logs.some(line => line.includes('NON MAPPATA: Vini, Gastronomia > Birra > Birra Artigianale')));
+  assert.ok(result.logs.some(line => line.includes('0 categorie mappate, 1 categorie non mappate')));
+});
+
+test('Categorie policy block esplicita: categoria non mappata blocca senza scritture Base', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    env: { UNMAPPED_CATEGORY_POLICY: 'block', DRY_RUN: 'false' },
+    categoryMappings: {
+      canonical: canonicalCategoryMappings.canonical,
+      suppliers: { TEST_SUPPLIER: { source_titles: ['Test Supplier'], categories: {} } },
+    },
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), /IMPORT BLOCCATO/),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  assert.ok(result.logs.some(line => line.includes('Policy categorie non mappate: BLOCK')));
+});
+
+test('Categorie policy non valida: errore di configurazione prima del fetch Vudoo', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    env: { UNMAPPED_CATEGORY_POLICY: 'other' },
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), /UNMAPPED_CATEGORY_POLICY/),
+  });
+  assert.deepEqual(result.calls, []);
+});
+
+test('Categorie policy skip: importa soltanto i prodotti mappati e mantiene contatori distinti', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-MAPPED-A', 'Categoria A'),
+    categorizedItem('SKU-UNMAPPED', 'Categoria Senza Mapping', 'Brand Escluso'),
+    categorizedItem('SKU-MAPPED-B', 'Categoria B'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { UNMAPPED_CATEGORY_POLICY: 'SKIP', DRY_RUN: 'false', TEST_MODE: 'false' },
+    categories: [
+      { category_id: 70, parent_id: 0, name: 'Categoria Mappata A' },
+      { category_id: 71, parent_id: 0, name: 'Categoria Mappata B' },
+    ],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  const productWrites = result.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.deepEqual(productWrites.map(call => call.parameters.sku), ['SKU-MAPPED-A', 'SKU-MAPPED-B']);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), false);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
+  assert.ok(result.logs.some(line => line.includes('Prodotti totali feed: 3')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 2')));
+  assert.ok(result.logs.some(line => line.includes('Esclusi categoria non mappata: 1')));
+  assert.ok(result.logs.some(line => line.includes('Categorie reali non mappate: 1')));
+  assert.ok(result.logs.some(line => line.includes('Categoria Senza Mapping → 1 prodotti esclusi')));
+  assert.ok(result.logs.some(line => line.includes('Saltati perché invariati: 0')));
+});
+
+test('Categorie policy skip: catalogo interamente mappato mantiene il flusso normale', async () => {
+  const result = await remoteSandbox({ env: { UNMAPPED_CATEGORY_POLICY: 'skip' } });
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryProductsList').length, 1);
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 1')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti esclusi per categoria reale non mappata: 0')));
+});
+
+test('XML remoto: EAN non valido produce warning ma il prodotto viene importato senza EAN', async () => {
+  const valid = itemXml.replace('<g:id>389578</g:id>',
+    '<g:id>389577</g:id><g:ean>8009513003852</g:ean>');
+  const invalid = itemXml.replace('<g:id>389578</g:id>',
+    '<g:id>389578</g:id><g:ean>8056370403714-</g:ean>');
+  const result = await remoteSandbox({ xml: catalogXml(valid + invalid),
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' } });
+  const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.equal(creates.length, 2);
+  assert.equal(creates[0].parameters.sku, '389577');
+  assert.equal(creates[0].parameters.ean, '8009513003852');
+  assert.equal(creates[1].parameters.sku, '389578');
+  assert.equal(creates[1].parameters.ean, undefined);
+  assert.ok(result.logs.some(line => line.includes('EAN non validi omessi: 1')));
+  assert.ok(result.logs.some(line => line.includes('389578') && line.includes('HKZDVHCW')
+    && line.includes('Prodotto test') && line.includes('8056370403714-')));
+});
+
+test('Categorie policy skip: catalogo interamente non mappato non chiama Base e non incrementa SKIP', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    env: { UNMAPPED_CATEGORY_POLICY: 'skip', DRY_RUN: 'false', TEST_MODE: 'false' },
+    categoryMappings: {
+      canonical: partialCategoryMappings.canonical,
+      suppliers: { TEST_SUPPLIER: { source_titles: ['Test Supplier'], categories: {} } },
+    },
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  assert.ok(result.logs.some(line => line.includes('Prodotti totali feed: 1')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 0')));
+  assert.ok(result.logs.some(line => line.includes('Esclusi categoria non mappata: 1')));
+  assert.ok(result.logs.some(line => line.includes('Saltati perché invariati: 0')));
+});
+
+test('No name: policy block esclude sempre le categorie mancanti e registra un solo prodotto', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-MAPPED', 'Categoria A'),
+    categorizedItem('SKU-NO-NAME', ' NO   NAME> no NAME ', 'Brand Solo Escluso'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false', UNMAPPED_CATEGORY_POLICY: 'block' },
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct').map(call => call.parameters.sku), ['SKU-MAPPED']);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), false);
+  assert.ok(result.logs.some(line => line.includes('Prodotti esclusi per categoria sorgente mancante: 1')));
+  assert.ok(result.logs.some(line => line.includes('Categorie reali non mappate: 0')));
+  assert.ok(result.logs.some(line => line.includes('Saltati perché invariati: 0')));
+  const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
+  assert.ok(report);
+  const records = JSON.parse(report[1]);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].supplier_id, 'TEST_SUPPLIER');
+  assert.equal(records[0].id, 'SKU-NO-NAME');
+});
+
+test('No name: product_type vuoto o assente viene escluso anche con policy block', async () => {
+  const noCategory = categorizedItem('SKU-ABSENT', 'Categoria A')
+    .replace(/<g:product_type>.*?<\/g:product_type>/, '');
+  const xml = catalogXml([
+    categorizedItem('SKU-EMPTY', '  '),
+    noCategory,
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 2')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 0')));
+  const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
+  assert.equal(JSON.parse(report[1]).length, 2);
+});
+
+test('No name: dati prodotto malformati e stesso g:id non bloccano il prodotto mappato', async () => {
+  const excluded = categorizedItem('SKU-MAPPED', 'No name > No name', 'Brand Escluso')
+    .replace('<g:price>3.20 EUR</g:price>', '<g:price>prezzo invalido</g:price>')
+    .replace('<g:quantity>234</g:quantity>', '<g:quantity>non numerica</g:quantity>');
+  const xml = catalogXml([
+    categorizedItem('SKU-MAPPED', 'Categoria A'), excluded,
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false', UNMAPPED_CATEGORY_POLICY: 'block' },
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+    .map(call => call.parameters.sku), ['SKU-MAPPED']);
+  assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 1')));
+  const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
+  assert.equal(JSON.parse(report[1])[0].id, 'SKU-MAPPED');
+});
+
+test('No name: g:id assente viene skippato, conteggiato e non inserito nel registro', async () => {
+  const withoutId = categorizedItem('SKU-TO-REMOVE', 'No name > No name', 'Brand Escluso')
+    .replace('<g:id>SKU-TO-REMOVE</g:id>', '')
+    .replace('<g:price>3.20 EUR</g:price>', '<g:price>non valido</g:price>');
+  const xml = catalogXml([
+    categorizedItem('SKU-MAPPED', 'Categoria A'),
+    categorizedItem('SKU-REGISTERED', 'No name > No name'),
+    withoutId,
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false', UNMAPPED_CATEGORY_POLICY: 'block' },
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+    .map(call => call.parameters.sku), ['SKU-MAPPED']);
+  assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 2')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti senza categoria non registrabili (g:id mancante): 1')));
+  const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
+  assert.deepEqual(JSON.parse(report[1]).map(product => product.id), ['SKU-REGISTERED']);
+});
+
+test('No name: solo prodotti senza g:id terminano senza Base e senza creare registro', async () => {
+  const withoutId = categorizedItem('SKU-TO-REMOVE', 'No name > No name')
+    .replace('<g:id>SKU-TO-REMOVE</g:id>', '');
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml: catalogXml(withoutId),
+    categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false', UNMAPPED_CATEGORY_POLICY: 'block' },
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 0')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti senza categoria non registrabili (g:id mancante): 1')));
+  assert.equal([...result.writes].some(([filename]) => filename.endsWith('no_name_products.json')), false);
+});
+
+test('Nuovo supplier: genera bozza solo con categorie reali e ferma import prima di Base', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-NEW', 'PARFUM'),
+    categorizedItem('SKU-NO-NAME', 'No name > No name'),
+  ].join('')).replace('<title>Test Supplier</title>', '<title>Pippo S.p.A.</title>');
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: { canonical: partialCategoryMappings.canonical, suppliers: {} },
+    env: { UNMAPPED_CATEGORY_POLICY: 'skip' },
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), /config\/suppliers\/pippo-spa\.json/),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  const draft = [...result.writes].find(([filename]) => filename.endsWith('pippo-spa.json'));
+  assert.ok(draft);
+  assert.deepEqual(JSON.parse(draft[1]).categories, { PARFUM: null });
+  assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 1')));
+});
+
+test('Supplier esistente: nuova categoria reale espone conteggio, policy e file da aggiornare', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-NEW-A', 'Nuova Categoria'),
+    categorizedItem('SKU-NEW-B', 'Nuova Categoria'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
+      error.message.includes('Nuova Categoria: 2 prodotti') &&
+      error.message.includes('config/suppliers/test-supplier.json') &&
+      error.message.includes('UNMAPPED_CATEGORY_POLICY=block')),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+});
+
+test('Supplier esistente: mapping null con policy skip esclude la categoria e continua', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-MAPPED', 'Categoria A'),
+    categorizedItem('SKU-NULL', 'Categoria Non Risolta'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    env: { UNMAPPED_CATEGORY_POLICY: 'skip', DRY_RUN: 'false', TEST_MODE: 'false' },
+    categoryMappings: categoryMappingsWithNull,
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+    .map(call => call.parameters.sku), ['SKU-MAPPED']);
+  assert.ok(result.logs.some(line => line.includes('NON MAPPATA: Categoria Non Risolta (1 prodotti)')));
+  assert.ok(result.logs.some(line => line.includes('Esclusi categoria non mappata: 1')));
+});
+
+test('Supplier esistente: mapping null con policy block ferma prima di Base', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml: catalogXml(categorizedItem('SKU-NULL', 'Categoria Non Risolta')),
+    env: { UNMAPPED_CATEGORY_POLICY: 'block', DRY_RUN: 'false' },
+    categoryMappings: categoryMappingsWithNull,
+    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
+      error.message.includes('Categoria Non Risolta: 1 prodotti') &&
+      error.message.includes('config/suppliers/test-supplier.json') &&
+      error.message.includes('UNMAPPED_CATEGORY_POLICY=block')),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+});
+
+test('Supplier esistente: mapping null non presente nel feed non blocca policy block', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml: catalogXml(categorizedItem('SKU-MAPPED', 'Categoria A')),
+    env: { UNMAPPED_CATEGORY_POLICY: 'block', DRY_RUN: 'false' },
+    categoryMappings: categoryMappingsWithNull,
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+    .map(call => call.parameters.sku), ['SKU-MAPPED']);
+});
+
+test('Supplier esistente: mix mapped/null/no-name mantiene conteggi distinti', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-MAPPED-1', 'Categoria A'),
+    categorizedItem('SKU-NULL-1', 'Categoria Non Risolta'),
+    categorizedItem('SKU-NO-NAME', 'No name > No name'),
+    categorizedItem('SKU-MAPPED-2', 'Categoria A'),
+    categorizedItem('SKU-NULL-2', 'Categoria Non Risolta'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    env: { UNMAPPED_CATEGORY_POLICY: 'skip', DRY_RUN: 'false', TEST_MODE: 'false' },
+    categoryMappings: categoryMappingsWithNull,
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+    .map(call => call.parameters.sku), ['SKU-MAPPED-1', 'SKU-MAPPED-2']);
+  for (const line of [
+    'Prodotti totali feed: 5', 'Prodotti importabili: 2',
+    'Prodotti esclusi per categoria sorgente mancante: 1',
+    'Esclusi categoria non mappata: 2', 'Categorie reali non mappate: 1',
+    'Categoria Non Risolta → 2 prodotti esclusi',
+  ]) assert.ok(result.logs.some(log => log.includes(line)), line);
+  const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
+  assert.deepEqual(JSON.parse(report[1]).map(product => product.id), ['SKU-NO-NAME']);
+});
+
+test('Hardening: feed misto esclude categorie non importabili, avverte per EAN e conserva stock zero', async () => {
+  const valid = categorizedItem('SKU-VALID', 'Categoria A')
+    .replace('<g:id>SKU-VALID</g:id>', '<g:id>SKU-VALID</g:id><g:ean>8056370403714-</g:ean>')
+    .replace('<g:quantity>234</g:quantity>', '<g:quantity>0</g:quantity>');
+  const xml = catalogXml([
+    valid,
+    categorizedItem('SKU-NO-NAME', 'No name > No name', 'Brand Escluso'),
+    categorizedItem('SKU-UNMAPPED', 'Categoria non configurata', 'Brand Escluso'),
+    categorizedItem('SKU-SECOND', 'Categoria B'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false', UNMAPPED_CATEGORY_POLICY: 'skip' },
+    categories: [
+      { category_id: 70, parent_id: 0, name: 'Categoria Mappata A' },
+      { category_id: 71, parent_id: 0, name: 'Categoria Mappata B' },
+    ],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
+  });
+  const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.deepEqual(creates.map(call => call.parameters.sku), ['SKU-VALID', 'SKU-SECOND']);
+  assert.equal(creates[0].parameters.stock.bl_30, 0);
+  assert.equal(creates[0].parameters.ean, undefined);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), false);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
+  for (const line of [
+    'Prodotti totali feed: 4', 'Prodotti importabili: 2',
+    'Prodotti esclusi per categoria sorgente mancante: 1',
+    'Esclusi categoria non mappata: 1', 'Categorie reali non mappate: 1',
+    'EAN non validi omessi: 1', 'Creati: 2', 'Saltati perché invariati: 0',
+  ]) assert.ok(result.logs.some(log => log.includes(line)), line);
+});
+
+test('XML remoto: Base vuota crea esclusivamente il percorso canonico completo', async () => {
+  const result = await remoteSandbox({
+    env: { DRY_RUN: 'false' },
+    categories: [],
+    categoryMappings: canonicalCategoryMappings,
+  });
+  const creates = result.calls.filter(call => call.method === 'addInventoryCategory');
+  assert.deepEqual(creates.map(call => call.parameters.name), ['Categoria Canonica', 'Foglia Canonica']);
+  assert.equal(creates[0].parameters.parent_id, 0);
+  assert.equal(creates[1].parameters.parent_id, 100 + result.calls.indexOf(creates[0]) + 1);
+  assert.ok(creates.every(call => !call.parameters.name.includes('Vini, Gastronomia')));
+});
+
+test('XML remoto: Base con radice canonica crea soltanto la foglia', async () => {
+  const result = await remoteSandbox({
+    env: { DRY_RUN: 'false' },
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Canonica' }],
+    categoryMappings: canonicalCategoryMappings,
+  });
+  const creates = result.calls.filter(call => call.method === 'addInventoryCategory');
+  assert.equal(creates.length, 1);
+  assert.equal(creates[0].parameters.name, 'Foglia Canonica');
+  assert.equal(creates[0].parameters.parent_id, 70);
+});
+
+test('XML remoto: Base con percorso canonico completo non crea categorie', async () => {
+  const result = await remoteSandbox({
+    env: { DRY_RUN: 'false' },
+    categories: [
+      { category_id: 70, parent_id: 0, name: 'Categoria Canonica' },
+      { category_id: 71, parent_id: 70, name: 'Foglia Canonica' },
+    ],
+    categoryMappings: canonicalCategoryMappings,
+  });
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryCategory').length, 0);
+  const productWrite = result.calls.find(call => call.method === 'addInventoryProduct');
+  assert.equal(productWrite.parameters.category_id, 71);
+});
+
+test('XML remoto: sincronizzazione produttori non dipende dai mapping categoria', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    categoryMappings: { canonical: {}, suppliers: {} },
+    action: async api => assert.equal(await api.syncVudooManufacturers('test-company'), 0),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET', 'getInventoryManufacturers']);
+  assert.ok(result.logs.some(line => line.includes('Produttore: Marca')));
+});
+
+test('XML remoto: sincronizzazione produttori vede anche brand con categorie non mappate', async () => {
+  const xml = catalogXml([
+    categorizedItem('SKU-MAPPED', 'Categoria A'),
+    categorizedItem('SKU-UNMAPPED', 'Categoria Senza Mapping', 'Brand Solo Escluso'),
+  ].join(''));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    forbidCatalogFiles: true,
+    xml,
+    env: { UNMAPPED_CATEGORY_POLICY: 'skip' },
+    categoryMappings: partialCategoryMappings,
+    action: async api => assert.equal(await api.syncVudooManufacturers('test-company'), 0),
+  });
+  assert.ok(result.logs.some(line => line.includes('[DRY_RUN] Produttore da creare: Brand Solo Escluso')));
+});
 
 test('XML remoto: warning Parameters non viene dichiarato successo e non ripete CREATE', async () => {
   const product = normalizeVudooProduct(parseCatalogXml(catalogXml())[0]);
@@ -207,8 +697,9 @@ async function sandbox(options = {}) {
   const waits = [];
   let now = 0;
   const processMock = { env: { BASE_API_TOKEN: 'test-only-token', TEST_MODE: 'true', DRY_RUN: 'true', ...options.env }, exitCode: 0 };
+  class FakeDate extends Date { static now() { return now; } }
   const context = vm.createContext({
-    Date: { now: () => now, parse: Date.parse },
+    Date: FakeDate,
     setTimeout: (resolve, milliseconds) => { waits.push(milliseconds); now += milliseconds; resolve(); },
     URL, URLSearchParams, AbortSignal, process: processMock,
     console: { log: (...args) => logs.push(args.join(' ')), warn: (...args) => logs.push(args.join(' ')), error: (...args) => logs.push(args.join(' ')) },
@@ -257,9 +748,36 @@ async function sandbox(options = {}) {
       if (writes.has(filename)) return writes.get(filename);
       if (filename.endsWith('real_products.json')) return JSON.stringify(options.products ?? [source]);
       if (filename.endsWith('VUDOO.xml')) return '<rss xmlns:g="http://base.google.com/ns/1.0"><channel><item><title>Test</title><g:id>SKU-A</g:id><g:brand>Marca</g:brand><g:price>25,00 EUR</g:price></item></channel></rss>';
+      const mappings = options.categoryMappings ?? categoryMappings;
+      if (filename.endsWith('canonical-categories.json')) return JSON.stringify(mappings.canonical);
+      if (filename.includes('config\\suppliers\\') || filename.includes('config/suppliers/')) {
+        const suppliers = options.supplierConfigs ?? Object.entries(mappings.suppliers).map(([id, value]) =>
+          ({ filename: `${id.toLowerCase().replace(/_/g, '-')}.json`, value: { supplier_id: id, ...value } }));
+        const supplier = suppliers.find(item => filename.endsWith(item.filename));
+        if (supplier) return JSON.stringify(supplier.value);
+      }
+      if (filename.endsWith('no_name_products.json')) {
+        const error = new Error('ENOENT');
+        error.code = 'ENOENT';
+        throw error;
+      }
       return fs.readFileSync(filename, 'utf8');
     },
-    writeFile: async (url, text) => writes.set(fileURLToPath(url), text)
+    readdir: async () => (options.supplierConfigs ?? Object.entries((options.categoryMappings ?? categoryMappings).suppliers)
+      .map(([id]) => ({ filename: `${id.toLowerCase().replace(/_/g, '-')}.json` }))).map(item => item.filename),
+    mkdir: async () => {},
+    open: async url => {
+      const filename = fileURLToPath(url);
+      if (writes.has(filename)) { const error = new Error('EEXIST'); error.code = 'EEXIST'; throw error; }
+      writes.set(filename, '');
+      return { writeFile: async text => writes.set(filename, text), close: async () => {} };
+    },
+    writeFile: async (url, text) => writes.set(fileURLToPath(url), text),
+    rename: async (from, to) => {
+      writes.set(fileURLToPath(to), writes.get(fileURLToPath(from)));
+      writes.delete(fileURLToPath(from));
+    },
+    unlink: async url => writes.delete(fileURLToPath(url)),
   };
   const modules = new Map();
   function load(id) {
