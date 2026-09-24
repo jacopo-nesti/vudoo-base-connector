@@ -241,6 +241,44 @@ export function formatUnmappedCategoryError(analysis, policy) {
   return `IMPORT BLOCCATO\nSupplier: ${analysis.supplier.id}\nSource title: ${analysis.channelTitle}\nCategorie sorgente non mappate:\n${categories}\nMotivo: il feed contiene categorie reali senza mapping.\nConfigurazione da aggiornare: ${analysis.supplier.file}\nPolicy attuale: UNMAPPED_CATEGORY_POLICY=${policy}\nAzione: aggiungere i mapping e ripetere il preflight/import.`;
 }
 
+export function buildCategoryAutoMapIndex(mappings) {
+  const approved = new Map();
+  const canonicalPaths = new Map();
+  for (const supplier of mappings.suppliers.values()) {
+    for (const [sourceCategory, canonicalId] of supplier.categories) {
+      if (canonicalId == null) continue;
+      const key = nameIdentity(sourceCategory);
+      if (!approved.has(key)) approved.set(key, new Set());
+      approved.get(key).add(canonicalId);
+    }
+  }
+  for (const canonical of mappings.canonical.values()) {
+    const key = nameIdentity(canonical.basePath.join(' > '));
+    if (!canonicalPaths.has(key)) canonicalPaths.set(key, new Set());
+    canonicalPaths.get(key).add(canonical.id);
+  }
+  return { approved, canonicalPaths };
+}
+
+export function suggestCategoryMapping(sourceCategory, index) {
+  if (isMissingSourceCategory(sourceCategory)) return { canonicalId: null, origin: null };
+  const key = nameIdentity(sourceCategory);
+  const approved = index.approved.get(key);
+  const canonical = index.canonicalPaths.get(key);
+  if (approved?.size > 1) return { canonicalId: null, origin: null };
+  if (approved?.size === 1) {
+    const canonicalId = approved.values().next().value;
+    if (canonical && (canonical.size !== 1 || !canonical.has(canonicalId))) {
+      return { canonicalId: null, origin: null };
+    }
+    return { canonicalId, origin: 'supplier' };
+  }
+  if (canonical?.size === 1) {
+    return { canonicalId: canonical.values().next().value, origin: 'canonical' };
+  }
+  return { canonicalId: null, origin: null };
+}
+
 function supplierSlug(title) {
   const slug = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/[\s-]+/g, '-');
@@ -249,16 +287,28 @@ function supplierSlug(title) {
 }
 
 export async function createSupplierDraft(analysis, rootUrl = configRoot, mappings) {
+  const availableMappings = mappings ?? await loadCategoryMappings(rootUrl);
   const title = nonEmptyText(analysis.channelTitle, 'channel.title');
   const slug = supplierSlug(title);
   const directory = new URL('suppliers/', rootUrl);
   const filename = `${slug}.json`;
   const file = `config/suppliers/${filename}`;
   const supplierId = slug.toUpperCase().replace(/-/g, '_');
-  if ([...(mappings?.suppliers.keys() ?? [])].some(id => nameIdentity(id) === nameIdentity(supplierId))) {
+  const existingSupplier = [...availableMappings.suppliers.values()]
+    .find(supplier => nameIdentity(supplier.id) === nameIdentity(supplierId));
+  if (existingSupplier && (existingSupplier.file !== file ||
+      !existingSupplier.sourceTitles.some(sourceTitle => nameIdentity(sourceTitle) === nameIdentity(title)))) {
     throw new Error(`Nuovo supplier "${title}": supplier_id ${supplierId} già in uso. Verificare i profili in config/suppliers/.`);
   }
-  const categories = Object.fromEntries(analysis.entries.map(entry => [entry.sourceCategory, null]));
+  const index = buildCategoryAutoMapIndex(availableMappings);
+  const stats = { supplier: 0, canonical: 0, manual: 0 };
+  const categories = Object.fromEntries(analysis.entries
+    .filter(entry => !isMissingSourceCategory(entry.sourceCategory))
+    .map(entry => {
+      const { canonicalId, origin } = suggestCategoryMapping(entry.sourceCategory, index);
+      stats[origin ?? 'manual']++;
+      return [entry.sourceCategory, canonicalId];
+    }));
   const draft = {
     supplier_id: supplierId,
     source_titles: [title],
@@ -275,7 +325,7 @@ export async function createSupplierDraft(analysis, rootUrl = configRoot, mappin
           !existing.source_titles.some(sourceTitle => typeof sourceTitle === 'string' && nameIdentity(sourceTitle) === nameIdentity(title))) {
         throw new Error(`Nuovo supplier "${title}": ${file} esiste già per un altro titolo. Il file non è stato modificato.`);
       }
-      return { file, draft, created: false };
+      return { file, draft, created: false, stats };
     }
     throw new Error(`Impossibile creare la bozza supplier ${file}: ${error.message}`);
   }
@@ -287,5 +337,5 @@ export async function createSupplierDraft(analysis, rootUrl = configRoot, mappin
     throw new Error(`Impossibile completare la bozza supplier ${file}: ${error.message}`);
   }
   await handle.close();
-  return { file, draft, created: true };
+  return { file, draft, created: true, stats };
 }

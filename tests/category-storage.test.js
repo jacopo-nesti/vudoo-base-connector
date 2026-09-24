@@ -7,16 +7,16 @@ import { pathToFileURL } from 'node:url';
 import {
   loadCategoryMappings, resolveSupplierProfile, normalizeCategory,
   analyzeCatalogCategories, createSupplierDraft, isMissingSourceCategory,
+  validateCategoryMappings, buildCategoryAutoMapIndex, suggestCategoryMapping,
 } from '../src/categoryNormalizer.js';
 import { recordNoNameProducts } from '../src/noNameReport.js';
 
-async function withConfig(action, suppliers = {}) {
+async function withConfig(action, suppliers = {}, canonical = { FRAGRANCE: { base_path: ['Bellezza', 'Profumi'] } }) {
   const directory = await mkdtemp(join(tmpdir(), 'vudoo-categories-'));
   const rootUrl = pathToFileURL(directory + sep);
   try {
     await mkdir(join(directory, 'suppliers'));
-    await writeFile(join(directory, 'canonical-categories.json'),
-      JSON.stringify({ FRAGRANCE: { base_path: ['Bellezza', 'Profumi'] } }));
+    await writeFile(join(directory, 'canonical-categories.json'), JSON.stringify(canonical));
     for (const [filename, supplier] of Object.entries(suppliers)) {
       await writeFile(join(directory, 'suppliers', filename), JSON.stringify(supplier));
     }
@@ -109,13 +109,133 @@ test('Nuovo supplier: bozza deterministica, categorie reali uniche e nessuna sov
     const text = await readFile(filename, 'utf8');
     const draft = JSON.parse(text);
     assert.equal(draft.supplier_id, 'PIPPO_SPA');
-    assert.deepEqual(draft.categories, { 'HOME > DIFFUSERS': null, PARFUM: null });
+    assert.deepEqual(draft.categories, { 'HOME > DIFFUSERS': null, PARFUM: 'FRAGRANCE' });
+    assert.deepEqual(first.stats, { supplier: 1, canonical: 0, manual: 1 });
     const second = await createSupplierDraft(analysis, rootUrl);
     assert.equal(second.created, false);
     assert.equal(await readFile(filename, 'utf8'), text);
     const supplier = resolveSupplierProfile('Pippo S.p.A.', await loadCategoryMappings(rootUrl));
-    assert.equal(supplier.categories.get('parfum'), null);
+    assert.equal(supplier.categories.get('parfum'), 'FRAGRANCE');
+  }, { 'supplier-b.json': supplierB });
+});
+
+test('Auto-mapping: un mapping approvato, anche da due supplier, usa l’identità esistente', () => {
+  const mappings = validateCategoryMappings({
+    canonical: { FRAGRANCE: { base_path: ['Bellezza', 'Profumi'] } },
+    suppliers: {
+      A: { source_titles: ['A'], categories: { 'Bellezza > Fragranze': 'FRAGRANCE' } },
+      B: { source_titles: ['B'], categories: { ' bellezza   > fragranze ': 'FRAGRANCE' } },
+    },
   });
+  const index = buildCategoryAutoMapIndex(mappings);
+  assert.deepEqual(suggestCategoryMapping('BELLEZZA > FRAGRANZE', index), {
+    canonicalId: 'FRAGRANCE', origin: 'supplier',
+  });
+  assert.deepEqual(suggestCategoryMapping('  Bellezza   > Fragranze  ', index), {
+    canonicalId: 'FRAGRANCE', origin: 'supplier',
+  });
+});
+
+test('Auto-mapping: approvazioni discordanti restano manuali anche con un base_path coincidente', () => {
+  const mappings = validateCategoryMappings({
+    canonical: {
+      FRAGRANCE: { base_path: ['Altri Prodotti'] },
+      BODY_CREAM: { base_path: ['Cura del corpo', 'Creme'] },
+    },
+    suppliers: {
+      A: { source_titles: ['A'], categories: { 'Altri Prodotti': 'FRAGRANCE' } },
+      B: { source_titles: ['B'], categories: { ' altri   prodotti ': 'BODY_CREAM' } },
+    },
+  });
+  assert.deepEqual(suggestCategoryMapping('ALTRI PRODOTTI', buildCategoryAutoMapIndex(mappings)), {
+    canonicalId: null, origin: null,
+  });
+});
+
+test('Auto-mapping: base_path canonico richiede identità unica sull’intero percorso', () => {
+  const mappings = validateCategoryMappings({
+    canonical: {
+      FRAGRANCE: { base_path: ['Bellezza', 'Profumi'] },
+      HOME: { base_path: ['Casa', 'Profumi'] },
+    },
+    suppliers: {},
+  });
+  const index = buildCategoryAutoMapIndex(mappings);
+  assert.deepEqual(suggestCategoryMapping(' BELLEZZA > PROFUMI ', index), {
+    canonicalId: 'FRAGRANCE', origin: 'canonical',
+  });
+  for (const source of ['Profumi', 'Bellezza', 'Altra > Profumi', 'Sconosciuta',
+    'No name > No name', '', undefined]) {
+    assert.deepEqual(suggestCategoryMapping(source, index), { canonicalId: null, origin: null }, String(source));
+  }
+});
+
+test('Auto-mapping: base_path canonico duplicato o discordante con mapping approvato resta manuale', () => {
+  const duplicated = validateCategoryMappings({
+    canonical: {
+      FIRST: { base_path: ['Bellezza', 'Profumi'] },
+      SECOND: { base_path: [' bellezza ', 'profumi'] },
+    },
+    suppliers: {},
+  });
+  assert.deepEqual(suggestCategoryMapping('Bellezza > Profumi', buildCategoryAutoMapIndex(duplicated)), {
+    canonicalId: null, origin: null,
+  });
+  const contradictory = validateCategoryMappings({
+    canonical: {
+      FIRST: { base_path: ['Bellezza', 'Profumi'] },
+      SECOND: { base_path: ['Casa', 'Profumi'] },
+    },
+    suppliers: {
+      A: { source_titles: ['A'], categories: { 'Bellezza > Profumi': 'SECOND' } },
+    },
+  });
+  assert.deepEqual(suggestCategoryMapping('Bellezza > Profumi', buildCategoryAutoMapIndex(contradictory)), {
+    canonicalId: null, origin: null,
+  });
+});
+
+test('Nuovo supplier: scaffold misto usa tutti i profili, conserva null e non riscrive file esistenti', async () => {
+  const existingA = {
+    supplier_id: 'A', source_titles: ['A'], categories: { 'Fragranze originali': 'FRAGRANCE' },
+  };
+  const existingB = {
+    supplier_id: 'B', source_titles: ['B'], categories: { ' fragranze   originali ': 'FRAGRANCE' },
+  };
+  const canonical = {
+    FRAGRANCE: { base_path: ['Bellezza', 'Profumi'] },
+    HOME: { base_path: ['Casa', 'Diffusori'] },
+  };
+  await withConfig(async ({ directory, rootUrl }) => {
+    const existingFile = join(directory, 'suppliers', 'supplier-a.json');
+    const original = await readFile(existingFile, 'utf8');
+    const mappings = await loadCategoryMappings(rootUrl);
+    const products = [
+      { product_type: '  FRAGRANZE   ORIGINALI ' },
+      { product_type: ' casa > diffusori ' },
+      { product_type: 'Nuova categoria' },
+      { product_type: 'No name > No name' },
+      { product_type: '' },
+    ];
+    const analysis = analyzeCatalogCategories({
+      channelTitle: 'Nuovo Supplier', products, uniqueProducts: products,
+    }, mappings);
+    const created = await createSupplierDraft(analysis, rootUrl, mappings);
+    assert.equal(created.created, true);
+    assert.deepEqual(created.stats, { supplier: 1, canonical: 1, manual: 1 });
+    assert.deepEqual(created.draft.categories, {
+      '  FRAGRANZE   ORIGINALI ': 'FRAGRANCE',
+      ' casa > diffusori ': 'HOME',
+      'Nuova categoria': null,
+    });
+    const filename = join(directory, 'suppliers', 'nuovo-supplier.json');
+    const scaffold = await readFile(filename, 'utf8');
+    assert.deepEqual(JSON.parse(scaffold).categories, created.draft.categories);
+    const repeated = await createSupplierDraft(analysis, rootUrl);
+    assert.equal(repeated.created, false);
+    assert.equal(await readFile(filename, 'utf8'), scaffold);
+    assert.equal(await readFile(existingFile, 'utf8'), original);
+  }, { 'supplier-a.json': existingA, 'supplier-b.json': existingB }, canonical);
 });
 
 test('Nuovo supplier: collisione di filename o supplier ID non altera profili esistenti', async () => {
