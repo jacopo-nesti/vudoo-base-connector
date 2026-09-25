@@ -4,7 +4,7 @@ import { getProducts, detectAndFilterDuplicates, normalizeProduct } from './prod
 import { log } from './logger.js';
 
 export async function runPreflightCheck(catalog) {
-  log('[PREFLIGHT] Avvio controlli preliminari...');
+  log('\n[PREFLIGHT]\nAvvio controlli preliminari...');
 
   // 1. Verifica token e flag di configurazione
   if (!token) {

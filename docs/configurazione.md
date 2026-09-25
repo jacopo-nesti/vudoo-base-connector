@@ -10,6 +10,8 @@ Il comportamento dell'applicazione viene configurato tramite le variabili d'ambi
 * **`DRY_RUN`**: con `true` blocca tutte le scritture verso Base.com;
 * **`TEST_MODE`**: con `true` limita l'elaborazione al primo prodotto selezionato;
 * **`UNMAPPED_CATEGORY_POLICY`**: `block` (predefinito) blocca il catalogo se manca il mapping di una categoria sorgente reale; `skip` importa soltanto i prodotti mappati. I prodotti con categoria assente, vuota o `No name > No name` sono sempre esclusi, indipendentemente dalla policy. Quelli con `g:id` sono registrati in `reports/no_name_products.json`; quelli senza `g:id` sono conteggiati separatamente.
+* **`VUDOO_RESULTS_LIMIT`**: numero di risultati richiesti al Web Service Vudoo, default applicativo `3000`. Deve essere un intero positivo; un valore non valido produce un avviso e usa il default. Il valore è letto da `.env`/ambiente all'avvio, non richiesto dalla CLI e non garantisce la completezza del catalogo;
+* **`VUDOO_TIMEOUT_MS`**: timeout della richiesta e della lettura del catalogo XML, default applicativo `90000` ms. Deve essere un intero positivo; un valore non valido produce un avviso e usa il default. Dopo un timeout l'import non prosegue e si può ridurre il limite risultati oppure aumentare questo timeout nel file locale `.env`, riavviando il programma.
 
 ## Protezione delle API
 

@@ -10,7 +10,7 @@
     "sync": "node --env-file=.env tools/legacy/sync-json.js",
     "convert": "node tools/legacy/convert-json.js",
     "productor": "node --env-file=.env tools/legacy/productor-json.js",
-    "test": "node --experimental-vm-modules --test tests/integration-review.test.js tests/cli.test.js tests/vudoo-xml.test.js tests/category-normalizer.test.js tests/category-storage.test.js tests/catalog-hardening.test.js"
+    "test": "node --experimental-vm-modules --test tests/integration-review.test.js tests/cli.test.js tests/vudoo-xml.test.js tests/category-normalizer.test.js tests/category-storage.test.js tests/catalog-hardening.test.js tests/product-selector.test.js"
   },
   "engines": {
     "node": ">=22"

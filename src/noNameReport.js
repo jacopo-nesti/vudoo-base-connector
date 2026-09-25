@@ -3,8 +3,24 @@ import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 export const noNameReportPath = 'reports/no_name_products.json';
 const defaultReportUrl = new URL('../reports/no_name_products.json', import.meta.url);
 let temporaryFileCounter = 0;
+const renameDelays = [100, 250, 500];
 
-export async function recordNoNameProducts(products, supplierId, sourceTitle, reportUrl = defaultReportUrl, now = new Date()) {
+async function renameWithRetry(temporary, reportUrl, renameFile, wait) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await renameFile(temporary, reportUrl);
+      return;
+    } catch (error) {
+      if (!['EPERM', 'EBUSY'].includes(error.code) || attempt >= renameDelays.length) throw error;
+      await wait(renameDelays[attempt]);
+    }
+  }
+}
+
+export async function recordNoNameProducts(products, supplierId, sourceTitle, reportUrl = defaultReportUrl, now = new Date(), {
+  renameFile = rename,
+  wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
+} = {}) {
   const recordable = products.filter(product => typeof product.id === 'string' && product.id.trim());
   if (recordable.length === 0) return 0;
   if (typeof supplierId !== 'string' || !supplierId.trim()) throw new Error('supplier_id mancante per il registro prodotti senza categoria.');
@@ -47,7 +63,7 @@ export async function recordNoNameProducts(products, supplierId, sourceTitle, re
   const temporary = new URL(`no_name_products.json.tmp-${process.pid ?? 'test'}-${Date.now()}-${++temporaryFileCounter}`, reportUrl);
   try {
     await writeFile(temporary, `${JSON.stringify(output, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-    await rename(temporary, reportUrl);
+    await renameWithRetry(temporary, reportUrl, renameFile, wait);
   } catch (error) {
     await unlink(temporary).catch(() => {});
     throw new Error(`Impossibile aggiornare ${noNameReportPath}: ${error.message}`);

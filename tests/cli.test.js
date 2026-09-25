@@ -98,22 +98,23 @@ function runProcess(directory, entry, inputs = [], extraEnv = {}, timeoutMs = 10
 
 test('CLI: mostra il nuovo menu e uscita volontaria termina con codice 0', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['5']);
+    const result = await runProcess(directory, 'cli.js', ['6']);
     assert.equal(result.code, 0, result.output);
     assert.equal(result.signal, null);
     assert.match(result.output, /0\. Verifica ambiente e configurazione/);
     assert.match(result.output, /1\. Preflight catalogo Vudoo/);
     assert.match(result.output, /2\. Sincronizza produttori da Vudoo/);
-    assert.match(result.output, /3\. Importa \/ aggiorna catalogo Vudoo/);
-    assert.match(result.output, /4\. Esegui test automatici/);
-    assert.match(result.output, /5\. Esci/);
+    assert.match(result.output, /3\. Importa \/ aggiorna catalogo completo Vudoo/);
+    assert.match(result.output, /4\. Importa \/ aggiorna prodotti selezionati da Vudoo/);
+    assert.match(result.output, /5\. Esegui test automatici/);
+    assert.match(result.output, /6\. Esci/);
     assert.doesNotMatch(result.output, /Converti XML|flusso completo/);
   });
 });
 
 test('CLI: verifica ambiente senza cataloghi locali', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['0', '5']);
+    const result = await runProcess(directory, 'cli.js', ['0', '6']);
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /DIAGNOSTICA COMPLETATA CON SUCCESSO/);
     assert.match(result.output, /Rate limiter Base\.com.*100 richieste\/minuto/);
@@ -123,9 +124,12 @@ test('CLI: verifica ambiente senza cataloghi locali', async () => {
 
 test('CLI: preflight Vudoo usa il catalogo remoto mockato e non scrive', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['1', ' test-company ', '5'], { TEST_VUDOO_CODE: 'test-company' });
+    const result = await runProcess(directory, 'cli.js', ['1', ' test-company ', '6'], { TEST_VUDOO_CODE: 'test-company' });
     assert.equal(result.code, 0, result.output);
-    assert.match(result.output, /\[VUDOO\] Catalogo XML recuperato/);
+    assert.match(result.output, /\[VUDOO - FETCH\]/);
+    assert.match(result.output, /Timeout configurato: 90000 ms/);
+    assert.match(result.output, /Catalogo XML recuperato\.\nDurata: \d+\.\d{2} s/);
+    assert.match(result.output, /Dimensione XML: \d+\.\d{2} MB/);
     assert.match(result.output, /\[PREFLIGHT\] Controlli preliminari completati/);
     assert.match(result.output, /\[VUDOO\] Preflight completato/);
     assert.doesNotMatch(result.output, /Payload Base\.com \(addInventoryProduct\)/);
@@ -135,28 +139,99 @@ test('CLI: preflight Vudoo usa il catalogo remoto mockato e non scrive', async (
 
 test('CLI: sincronizzazione produttori usa il catalogo remoto mockato', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['2', 'test-company', '5'], { TEST_VUDOO_CODE: 'test-company' });
+    const result = await runProcess(directory, 'cli.js', ['2', 'test-company', '6'], { TEST_VUDOO_CODE: 'test-company' });
     assert.equal(result.code, 0, result.output);
-    assert.match(result.output, /\[VUDOO\] Catalogo validato/);
+    assert.match(result.output, /\[VUDOO - CATALOGO\]/);
     assert.match(result.output, /Produttore: Marca \(ID: 40\)/);
     assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
   });
 });
 
-test('CLI: import Vudoo usa il catalogo remoto mockato in DRY_RUN', async () => {
+test('CLI: import completo non apre il selettore e usa il catalogo remoto in DRY_RUN', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['3', 'test-company', '5'], { TEST_VUDOO_CODE: 'test-company' });
+    const result = await runProcess(directory, 'cli.js', ['3', 'test-company', '6'], { TEST_VUDOO_CODE: 'test-company' });
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /\[VUDOO\] Preflight completato/);
     assert.match(result.output, /Payload Base\.com \(addInventoryProduct\)/);
     assert.match(result.output, /DRY_RUN: nessuna scrittura/);
+    assert.doesNotMatch(result.output, /SELEZIONE PRODOTTI|Aggiungi tramite codice/);
     assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
+  });
+});
+
+test('CLI: valori Vudoo da env senza prompt per-run, anche negli import', async () => {
+  await withFixture(async directory => {
+    for (const [choice, rest] of [['1', []], ['3', []], ['4', ['2', '389578', '0', '6', '1']]]) {
+      const result = await runProcess(directory, 'cli.js', [choice, 'test-company', ...rest, '6'], {
+        TEST_VUDOO_CODE: 'test-company', VUDOO_RESULTS_LIMIT: '4000', VUDOO_TIMEOUT_MS: '45000',
+        TEST_VUDOO_EXPECTED_RESULTS: '4000',
+      });
+      assert.equal(result.code, 0, result.output);
+      assert.match(result.output, /Limite risultati configurato: 4000/);
+      assert.match(result.output, /Timeout configurato: 45000 ms/);
+      assert.match(result.output, /Prodotti ricevuti: 1/);
+      assert.doesNotMatch(result.output, /Numero massimo di risultati Vudoo|Inserisci timeout/);
+    }
+  });
+});
+
+test('CLI: limite risultati invalido avvisa e usa fallback senza prompt', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['1', 'test-company', '6'], {
+      TEST_VUDOO_CODE: 'test-company', VUDOO_RESULTS_LIMIT: 'invalid',
+    });
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /WARNING: VUDOO_RESULTS_LIMIT non valido: uso il default di 3000/);
+    assert.match(result.output, /Limite risultati configurato: 3000/);
+  });
+});
+
+test('CLI: timeout configurato e valore invalido con fallback diagnostico', async () => {
+  await withFixture(async directory => {
+    const configured = await runProcess(directory, 'cli.js', ['1', 'test-company', '6'], {
+      TEST_VUDOO_CODE: 'test-company', VUDOO_TIMEOUT_MS: '45000',
+    });
+    assert.equal(configured.code, 0, configured.output);
+    assert.match(configured.output, /Timeout configurato: 45000 ms/);
+    const fallback = await runProcess(directory, 'cli.js', ['1', 'test-company', '6'], {
+      TEST_VUDOO_CODE: 'test-company', VUDOO_TIMEOUT_MS: 'invalid',
+    });
+    assert.equal(fallback.code, 0, fallback.output);
+    assert.match(fallback.output, /VUDOO_TIMEOUT_MS non valido: uso il default di 90000 ms/);
+  });
+});
+
+test('CLI: timeout import completo o selettivo torna al menu senza preflight Base', async () => {
+  await withFixture(async directory => {
+    for (const choice of ['3', '4']) {
+      const result = await runProcess(directory, 'cli.js', [choice, 'test-company', '6'], {
+        TEST_VUDOO_CODE: 'test-company', TEST_BASE_SCENARIO: 'vudoo-timeout',
+      });
+      assert.equal(result.code, 1, result.output);
+      assert.match(result.output, /timeout dopo 90000 ms/);
+      assert.match(result.output, /Riprova con un valore risultati inferiore o aumenta VUDOO_TIMEOUT_MS/);
+      assert.ok((result.output.match(/VUDOO BASE CONNECTOR/g) ?? []).length >= 2);
+      assert.doesNotMatch(result.output, /\[PREFLIGHT\]|Payload Base|SELEZIONE PRODOTTI/);
+    }
+  });
+});
+
+test('CLI: import selettivo conferma solo il prodotto scelto', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['4', 'test-company', '2', '389578', '0', '6', '1', '6'], {
+      TEST_VUDOO_CODE: 'test-company',
+    });
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /Prodotti selezionati: 1/);
+    assert.match(result.output, /Aggiungi tramite codice/);
+    assert.match(result.output, /Payload Base\.com \(addInventoryProduct\)/);
+    assert.match(result.output, /DRY_RUN: nessuna scrittura/);
   });
 });
 
 test('CLI: codice azienda vuoto ferma il flusso prima del preflight', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['1', '   ', '5']);
+    const result = await runProcess(directory, 'cli.js', ['1', '   ', '6']);
     assert.equal(result.code, 1, result.output);
     assert.match(result.output, /Codice azienda mancante/);
     assert.doesNotMatch(result.output, /\[PREFLIGHT\]|Payload Base/);
@@ -165,7 +240,7 @@ test('CLI: codice azienda vuoto ferma il flusso prima del preflight', async () =
 
 test('CLI: XML remoto invalido non raggiunge Base.com', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['3', 'test-company', '5'], {
+    const result = await runProcess(directory, 'cli.js', ['3', 'test-company', '6'], {
       TEST_VUDOO_CODE: 'test-company',
       TEST_BASE_SCENARIO: 'vudoo-invalid',
     });
@@ -177,9 +252,9 @@ test('CLI: XML remoto invalido non raggiunge Base.com', async () => {
 
 test('CLI: input non valido torna al nuovo menu senza avviare operazioni', async () => {
   await withFixture(async directory => {
-    const result = await runProcess(directory, 'cli.js', ['99', '5']);
+    const result = await runProcess(directory, 'cli.js', ['99', '6']);
     assert.equal(result.code, 0, result.output);
-    assert.match(result.output, /Scelta non valida.*0 a 5/);
+    assert.match(result.output, /Scelta non valida.*0 a 6/);
     assert.doesNotMatch(result.output, /\[VUDOO\]|\[PREFLIGHT\]|DIAGNOSTICA/);
   });
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rename, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -331,3 +331,54 @@ test('Registro No name: item senza g:id non crea identita fittizie o file', asyn
     assert.deepEqual(JSON.parse(await readFile(reportUrl, 'utf8')).map(product => product.id), ['ID-1']);
   });
 });
+
+for (const [code, failures, expectedWaits] of [
+  ['EPERM', 1, [100]], ['EBUSY', 2, [100, 250]],
+]) {
+  test(`Registro No name: rename ${code} temporaneo riesce senza duplicare le voci`, async () => {
+    await withConfig(async ({ directory }) => {
+      const reportUrl = pathToFileURL(join(directory, 'reports', 'no_name_products.json'));
+      const waits = [];
+      let attempts = 0;
+      const io = {
+        renameFile: async (...args) => {
+          if (attempts++ < failures) throw Object.assign(new Error('lock simulato'), { code });
+          await rename(...args);
+        },
+        wait: async ms => { waits.push(ms); },
+      };
+      const product = { id: 'ID-1', product_type: 'No name > No name' };
+      await recordNoNameProducts([product], 'TEST', 'Test', reportUrl, new Date('2026-01-01'), io);
+      await recordNoNameProducts([product], 'TEST', 'Test', reportUrl, new Date('2026-01-02'));
+      const records = JSON.parse(await readFile(reportUrl, 'utf8'));
+      assert.equal(records.length, 1);
+      assert.equal(records[0].first_seen, '2026-01-01T00:00:00.000Z');
+      assert.equal(records[0].last_seen, '2026-01-02T00:00:00.000Z');
+      assert.equal(attempts, failures + 1);
+      assert.deepEqual(waits, expectedWaits);
+    });
+  });
+}
+
+for (const [code, expectedAttempts, expectedWaits] of [
+  ['EPERM', 4, [100, 250, 500]], ['EACCES', 1, []],
+]) {
+  test(`Registro No name: rename ${code} persistente fallisce e pulisce il temporaneo`, async () => {
+    await withConfig(async ({ directory }) => {
+      const reportUrl = pathToFileURL(join(directory, 'reports', 'no_name_products.json'));
+      const product = { id: 'ID-1', product_type: '' };
+      await recordNoNameProducts([product], 'TEST', 'Test', reportUrl);
+      const original = await readFile(reportUrl, 'utf8');
+      let attempts = 0;
+      const waits = [];
+      await assert.rejects(recordNoNameProducts([{ id: 'ID-2' }], 'TEST', 'Test', reportUrl, new Date(), {
+        renameFile: async () => { attempts++; throw Object.assign(new Error('lock simulato'), { code }); },
+        wait: async ms => { waits.push(ms); },
+      }), /Impossibile aggiornare .*lock simulato/);
+      assert.equal(attempts, expectedAttempts);
+      assert.deepEqual(waits, expectedWaits);
+      assert.equal(await readFile(reportUrl, 'utf8'), original);
+      assert.deepEqual(await readdir(join(directory, 'reports')), ['no_name_products.json']);
+    });
+  });
+}

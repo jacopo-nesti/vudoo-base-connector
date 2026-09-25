@@ -111,6 +111,8 @@ codiceAzienda inserito nella CLI
     ↓
 GET ProductCatalog.ashx e parsing XML in memoria
     ↓
+Selezione locale facoltativa dei prodotti da importare
+    ↓
 Normalizzazione e validazione prodotti
     ↓
 Deduplicazione feed e ricerca SKU nell'inventory selezionato
@@ -161,7 +163,7 @@ Il valore `10` è un default operativo, non un limite massimo. Lo stock viene as
 npm start
 ```
 
-Il comando apre il menu interattivo con verifica ambiente, preflight del catalogo remoto, sincronizzazione produttori, importazione prodotti e test automatici. Consulta [Modalità CLI](./docs/cli-modalita.md) per l'elenco aggiornato delle opzioni.
+Il comando apre il menu interattivo con verifica ambiente, preflight del catalogo remoto, sincronizzazione produttori, importazione completa o selettiva e test automatici. La CLI chiede il codice azienda e mostra i valori di fetch configurati, senza chiedere né modificare limite o timeout a ogni esecuzione. Il runtime legge `.env`; `.env.example` è solo un template versionato da copiare, non viene letto automaticamente. `VUDOO_RESULTS_LIMIT` usa il default applicativo `3000` e `VUDOO_TIMEOUT_MS` usa `90000` ms: sono valori operativi, non garantiscono la completezza del catalogo. L'import completo elabora tutti i prodotti ricevuti; quello selettivo permette di scegliere localmente per categoria, codice o parola chiave, consultare l'intera selezione a pagine e rimuovere prodotti per `g:id` o `g:sku`. In caso di timeout l'operazione si ferma prima del preflight Base.com. Consulta [Modalità CLI](./docs/cli-modalita.md) per i dettagli.
 
 ## 📦 Elenco Aggiornato dei Comandi npm
 
