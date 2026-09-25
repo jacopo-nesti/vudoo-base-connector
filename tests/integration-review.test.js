@@ -64,6 +64,139 @@ function categorizedItem(id, category, brand = 'Marca') {
     .replace(/<g:product_type>.*?<\/g:product_type>/, `<g:product_type>${category}</g:product_type>`);
 }
 
+test('Import selettivo: validazioni prodotto, categorie e Base vedono solo il subset', async () => {
+  const invalid = categorizedItem('SKU-EXCLUDED', 'Categoria non mappata')
+    .replace('<g:price>3.20 EUR</g:price>', '<g:price>prezzo invalido</g:price>');
+  const noName = categorizedItem('SKU-NO-NAME', 'No name > No name');
+  const feed = catalogXml(categorizedItem('SKU-SELECTED', 'Categoria A') + invalid + noName);
+  const result = await sandbox({
+    entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company', {
+      selectSources: sources => sources.filter(source => source.id === 'SKU-SELECTED'),
+    }), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+    .map(call => call.parameters.sku), ['SKU-SELECTED']);
+  assert.ok(result.logs.some(line => line.includes('Prodotti totali feed: 1')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 0')));
+});
+
+test('Import completo: tutti i prodotti validi ricevuti continuano nel flusso esistente', async () => {
+  const feed = catalogXml(categorizedItem('SKU-A', 'Categoria A') + categorizedItem('SKU-B', 'Categoria B'));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    categories: [
+      { category_id: 70, parent_id: 0, name: 'Categoria Mappata A' },
+      { category_id: 71, parent_id: 0, name: 'Categoria Mappata B' },
+    ],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company', {
+      selectSources: sources => sources,
+    }), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+    .map(call => call.parameters.sku), ['SKU-A', 'SKU-B']);
+});
+
+test('Import selettivo DRY_RUN: simula soltanto il prodotto scelto', async () => {
+  const feed = catalogXml(categorizedItem('SKU-A', 'Categoria A') + categorizedItem('SKU-B', 'Categoria B'));
+  const result = await sandbox({
+    entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => assert.equal(await api.importVudooCatalog('test-company', {
+      selectSources: sources => sources.filter(source => source.id === 'SKU-A'),
+    }), 0),
+  });
+  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct'), []);
+  assert.ok(result.logs.some(line => line.includes('DRY_RUN: nessuna scrittura')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti totali feed: 1')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti selezionati: 1')));
+});
+
+test('Import selettivo: categoria non mappata selezionata segue block e skip', async () => {
+  const feed = catalogXml(categorizedItem('SKU-MAPPED', 'Categoria A') +
+    categorizedItem('SKU-UNMAPPED', 'Categoria nuova'));
+  for (const policy of ['block', 'skip']) {
+    const result = await sandbox({
+      entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
+      env: { UNMAPPED_CATEGORY_POLICY: policy, DRY_RUN: 'false', TEST_MODE: 'false' },
+      categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+      action: async api => {
+        const run = api.importVudooCatalog('test-company', { selectSources: sources => sources });
+        if (policy === 'block') await assert.rejects(run, /Categoria nuova/);
+        else assert.equal(await run, 0);
+      },
+    });
+    assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
+      .map(call => call.parameters.sku), policy === 'block' ? [] : ['SKU-MAPPED']);
+  }
+});
+
+test('Import selettivo: supplier nuovo riceve solo le categorie scelte e conserva auto-mapping', async () => {
+  const feed = catalogXml(categorizedItem('SKU-CHOSEN', 'Categoria A') +
+    categorizedItem('SKU-OTHER', 'Categoria non scelta'))
+    .replace('<title>Test Supplier</title>', '<title>Nuovo Fornitore</title>');
+  const result = await sandbox({
+    entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
+    action: api => assert.rejects(api.importVudooCatalog('test-company', {
+      selectSources: sources => sources.filter(source => source.id === 'SKU-CHOSEN'),
+    }), /IMPORT BLOCCATO/),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  const draft = [...result.writes].find(([filename]) => filename.endsWith('nuovo-fornitore.json'));
+  assert.ok(draft);
+  assert.deepEqual(JSON.parse(draft[1]).categories, { 'Categoria A': 'MAPPED_A' });
+});
+
+test('Import selettivo: annullamento dopo il parsing non raggiunge Base', async () => {
+  const result = await sandbox({
+    entry: '../src/vudooImport.js',
+    action: async api => assert.equal(await api.importVudooCatalog('test-company', {
+      selectSources: () => null,
+    }), 0),
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+});
+
+test('Import selettivo: No Name scelto resta SKIP; non scelto non entra nel report', async () => {
+  const feed = catalogXml(categorizedItem('SKU-MAPPED', 'Categoria A') +
+    categorizedItem('SKU-NO-NAME', 'No name > No name').replace('<g:id>SKU-NO-NAME</g:id>', ''));
+  for (const includeNoName of [false, true]) {
+    const result = await sandbox({
+      entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
+      categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+      action: api => api.importVudooCatalog('test-company', {
+        selectSources: sources => includeNoName ? sources : sources.filter(source => source.id === 'SKU-MAPPED'),
+      }),
+    });
+    assert.ok(result.logs.some(line => line.includes(`Prodotti con categoria sorgente mancante: ${Number(includeNoName)}`)));
+    assert.ok(result.logs.some(line => line.includes(`Prodotti senza categoria non registrabili (g:id mancante): ${Number(includeNoName)}`)));
+    assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct'), []);
+  }
+});
+
+test('Import selettivo: g:id mancante o duplicato discordante bloccano solo se selezionati', async () => {
+  const missing = categorizedItem('SKU-BAD', 'Categoria A').replace('<g:id>SKU-BAD</g:id>', '');
+  const conflicting = categorizedItem('SKU-OK', 'Categoria A')
+    .replace('<g:price>3.20 EUR</g:price>', '<g:price>4.20 EUR</g:price>');
+  const feed = catalogXml(categorizedItem('SKU-OK', 'Categoria A') + missing + conflicting +
+    categorizedItem('SKU-OTHER', 'Categoria A'));
+  const base = { entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }] };
+  const onlyValid = await sandbox({ ...base, action: api => api.importVudooCatalog('test-company', {
+    selectSources: sources => [sources[3]],
+  }) });
+  assert.ok(onlyValid.logs.some(line => line.includes('Prodotti totali feed: 1')));
+  await sandbox({ ...base, action: api => assert.rejects(api.importVudooCatalog('test-company', {
+    selectSources: sources => [sources[1]],
+  }), /SKU mancante/) });
+  await sandbox({ ...base, action: api => assert.rejects(api.importVudooCatalog('test-company', {
+    selectSources: sources => [sources[0]],
+  }), /discordanti/) });
+});
+
 test('XML remoto: categoria non mappata mostra il riepilogo completo e blocca prima di Base', async () => {
   const result = await sandbox({
     entry: '../src/vudooImport.js',
@@ -629,7 +762,7 @@ for (const [name, options, error] of [
 test('XML remoto: TEST_MODE seleziona un solo SKU dopo validazione e dedup completa', async () => {
   const result = await remoteSandbox({ xml: catalogXml(itemXml + itemXml + itemXml.replace('<g:id>389578</g:id>', '<g:id>389579</g:id>')) });
   assert.equal(result.calls.filter(call => call.method === 'getInventoryProductsList').length, 1);
-  assert.ok(result.logs.some(log => log.includes('3 prodotti ricevuti, 2 SKU unici, 1 duplicati')));
+  assert.ok(result.logs.some(log => log.includes('Prodotti elaborati: 3\nSKU unici: 2\nDuplicati nel feed: 1')));
 });
 
 test('XML remoto: CREATE simulate con mock riusano gerarchia e produttore, nessuna immagine extra', async () => {
@@ -735,7 +868,7 @@ async function sandbox(options = {}) {
   const context = vm.createContext({
     Date: FakeDate,
     setTimeout: (resolve, milliseconds) => { waits.push(milliseconds); now += milliseconds; resolve(); },
-    URL, URLSearchParams, AbortSignal, process: processMock,
+    URL, URLSearchParams, AbortSignal, Buffer, process: processMock,
     console: { log: (...args) => logs.push(args.join(' ')), warn: (...args) => logs.push(args.join(' ')), error: (...args) => logs.push(args.join(' ')) },
     fetch: async (url, request) => {
       if (String(url).startsWith('https://www.vudoo.org/ProductCatalog.ashx?')) {

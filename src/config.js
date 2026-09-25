@@ -17,6 +17,30 @@ export function getUnmappedCategoryPolicy() {
   return parseUnmappedCategoryPolicy(process.env.UNMAPPED_CATEGORY_POLICY);
 }
 
+export function getVudooResultsConfig(raw = process.env.VUDOO_RESULTS_LIMIT) {
+  const fallback = 3000;
+  if (raw == null || raw.trim() === '') return { limit: fallback, invalid: false };
+  const value = Number(raw.trim());
+  if (!/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(value) || value <= 0) {
+    return { limit: fallback, invalid: true };
+  }
+  return { limit: value, invalid: false };
+}
+
+export function getVudooResultsLimit(raw = process.env.VUDOO_RESULTS_LIMIT) {
+  return getVudooResultsConfig(raw).limit;
+}
+
+export function getVudooTimeoutConfig(raw = process.env.VUDOO_TIMEOUT_MS) {
+  const defaultMs = 90000;
+  if (raw == null || raw.trim() === '') return { ms: defaultMs, invalid: false };
+  const value = Number(raw.trim());
+  if (!/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(value) || value <= 0) {
+    return { ms: defaultMs, invalid: true };
+  }
+  return { ms: value, invalid: false };
+}
+
 export function getBaseApiRequestsPerMinute() {
   const raw = process.env.BASE_API_REQUESTS_PER_MINUTE;
   if (raw == null || raw.trim() === '') return 100;

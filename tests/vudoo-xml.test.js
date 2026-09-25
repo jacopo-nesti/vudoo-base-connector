@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildVudooCatalogUrl, fetchVudooXml, prepareVudooCatalog, normalizeVudooProduct } from '../src/vudooXml.js';
 import { parseCatalogXml } from '../src/converter.js';
+import { getVudooTimeoutConfig } from '../src/config.js';
 import { buildBasePayload, buildBaseUpdatePayload } from '../src/products.js';
 import { catalogXml, itemXml, extraFields } from './fixtures/vudoo.js';
 
@@ -37,7 +38,7 @@ test('Vudoo XML: URL fisso, codice stringa con trim ed escaping, default central
   const url = buildVudooCatalogUrl('  azienda fittizia & ?  ');
   assert.equal(url.origin + url.pathname, 'https://www.vudoo.org/ProductCatalog.ashx');
   assert.deepEqual(Object.fromEntries(url.searchParams), {
-    codiceAzienda: 'azienda fittizia & ?', idCategoria: '', disponibili: 'true', lingua: '1', listino: '6', risultati: '500',
+    codiceAzienda: 'azienda fittizia & ?', idCategoria: '', disponibili: 'true', lingua: '1', listino: '6', risultati: '3000',
   });
 });
 
@@ -47,7 +48,18 @@ test('Vudoo XML: codice vuoto o non stringa rifiutato prima della rete', async t
   assert.equal(fetch.mock.callCount(), 0);
 });
 
+test('Vudoo timeout: default, override e fallback per configurazione invalida', () => {
+  assert.deepEqual(getVudooTimeoutConfig(null), { ms: 90000, invalid: false });
+  assert.deepEqual(getVudooTimeoutConfig(''), { ms: 90000, invalid: false });
+  assert.deepEqual(getVudooTimeoutConfig('45000'), { ms: 45000, invalid: false });
+  for (const value of ['0', '-1', 'abc', '1.5']) {
+    assert.deepEqual(getVudooTimeoutConfig(value), { ms: 90000, invalid: true });
+  }
+});
+
 test('Vudoo XML: GET singola senza token, timeout e redirect protetti', async t => {
+  const originalTimeout = AbortSignal.timeout;
+  const timeout = t.mock.method(AbortSignal, 'timeout', ms => originalTimeout(ms));
   const fetch = t.mock.method(globalThis, 'fetch', async (url, request) => {
     assert.equal(url.searchParams.get('codiceAzienda'), 'test-only-company');
     assert.equal(request.method, 'GET');
@@ -58,6 +70,9 @@ test('Vudoo XML: GET singola senza token, timeout e redirect protetti', async t 
   });
   assert.equal(await fetchVudooXml('test-only-company'), catalogXml());
   assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(timeout.mock.calls[0].arguments[0], 90000);
+  assert.equal(await fetchVudooXml('test-only-company', 1500, 45000), catalogXml());
+  assert.equal(timeout.mock.calls[1].arguments[0], 45000);
 });
 
 for (const [name, response, message] of [
@@ -84,7 +99,7 @@ for (const phase of ['richiesta', 'body']) {
     t.mock.method(AbortSignal, 'timeout', () => controller.signal);
     const fail = () => { controller.abort(); throw new Error('aborted'); };
     t.mock.method(globalThis, 'fetch', phase === 'richiesta' ? fail : async () => ({ ok: true, headers: new Headers(), text: fail }));
-    await assert.rejects(fetchVudooXml('test-only-company'), /timeout/);
+    await assert.rejects(fetchVudooXml('test-only-company'), /timeout dopo 90000 ms.*VUDOO_TIMEOUT_MS/);
   });
 }
 

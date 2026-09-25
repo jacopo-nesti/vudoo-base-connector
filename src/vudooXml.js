@@ -1,27 +1,37 @@
 import { parseCatalog, formatProductTitle } from './converter.js';
 import { normalizeProduct, detectAndFilterDuplicates } from './products.js';
 import { isMissingSourceCategory } from './categoryNormalizer.js';
+import { getVudooResultsLimit, getVudooTimeoutConfig } from './config.js';
 
 const endpoint = 'https://www.vudoo.org/ProductCatalog.ashx';
-const defaults = Object.freeze({ idCategoria: '', disponibili: true, lingua: 1, listino: 6, risultati: 500 });
+const defaults = Object.freeze({ idCategoria: '', disponibili: true, lingua: 1, listino: 6 });
 
-export function buildVudooCatalogUrl(codiceAzienda) {
+export function buildVudooCatalogUrl(codiceAzienda, resultsLimit = getVudooResultsLimit()) {
   if (typeof codiceAzienda !== 'string' || !codiceAzienda.trim()) {
     throw new Error('Codice azienda mancante.');
   }
+  if (!Number.isSafeInteger(resultsLimit) || resultsLimit <= 0) {
+    throw new Error('Il limite risultati Vudoo deve essere un intero maggiore di zero.');
+  }
   const url = new URL(endpoint);
-  url.search = new URLSearchParams({ codiceAzienda: codiceAzienda.trim(), ...defaults }).toString();
+  url.search = new URLSearchParams({ codiceAzienda: codiceAzienda.trim(), ...defaults, risultati: resultsLimit }).toString();
   return url;
 }
 
-export async function fetchVudooXml(codiceAzienda) {
-  const url = buildVudooCatalogUrl(codiceAzienda);
-  const signal = AbortSignal.timeout(30000);
+function timeoutError(timeoutMs) {
+  return new Error(`Vudoo: timeout dopo ${timeoutMs} ms. Il catalogo richiesto potrebbe essere troppo grande oppure il server Vudoo potrebbe essere lento. Riprova con un valore risultati inferiore o aumenta VUDOO_TIMEOUT_MS.`);
+}
+
+export async function fetchVudooXml(codiceAzienda, resultsLimit, timeoutMs = getVudooTimeoutConfig().ms) {
+  const url = buildVudooCatalogUrl(codiceAzienda, resultsLimit);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error('Timeout Vudoo non valido.');
+  const signal = AbortSignal.timeout(timeoutMs);
   let response;
   try {
     response = await fetch(url, { method: 'GET', signal, redirect: 'error' });
-  } catch {
-    throw new Error(signal.aborted ? 'Vudoo: timeout del catalogo.' : 'Vudoo: errore di rete o redirect.');
+  } catch (error) {
+    throw signal.aborted || error?.name === 'TimeoutError'
+      ? timeoutError(timeoutMs) : new Error('Vudoo: errore di rete o redirect.');
   }
   if (!response.ok) throw new Error(`Vudoo: errore HTTP ${response.status}.`);
   if (response.headers.get('content-type')?.toLowerCase().includes('text/html')) {
@@ -30,8 +40,9 @@ export async function fetchVudooXml(codiceAzienda) {
   let xml;
   try {
     xml = await response.text();
-  } catch {
-    throw new Error(signal.aborted ? 'Vudoo: timeout lettura catalogo.' : 'Vudoo: risposta non leggibile.');
+  } catch (error) {
+    throw signal.aborted || error?.name === 'TimeoutError'
+      ? timeoutError(timeoutMs) : new Error('Vudoo: risposta non leggibile.');
   }
   if (!xml.trim()) throw new Error('Vudoo: catalogo XML vuoto.');
   return xml;
@@ -117,8 +128,7 @@ export function normalizeVudooProduct(source) {
   return product;
 }
 
-export function prepareVudooCatalog(xml, { skipMissingSourceCategory = false } = {}) {
-  const { channelTitle, products: sources } = parseCatalog(xml);
+export function prepareParsedVudooCatalog({ channelTitle, products: sources }, { skipMissingSourceCategory = false } = {}) {
   const eanWarnings = [];
   const products = sources.map((source, index) => {
     try {
@@ -144,4 +154,8 @@ export function prepareVudooCatalog(xml, { skipMissingSourceCategory = false } =
     ? products.filter(product => !isMissingSourceCategory(product.product_type))
     : products);
   return { channelTitle, sources, products, eanWarnings, ...deduplicated };
+}
+
+export function prepareVudooCatalog(xml, options) {
+  return prepareParsedVudooCatalog(parseCatalog(xml), options);
 }

@@ -22,9 +22,11 @@ globalThis.fetch = async (url, request = {}) => {
   if (String(url).startsWith('https://www.vudoo.org/ProductCatalog.ashx?') && process.env.TEST_VUDOO_CODE) {
     assert.equal(request.method, 'GET');
     assert.deepEqual(Object.fromEntries(new URL(url).searchParams), {
-      codiceAzienda: process.env.TEST_VUDOO_CODE, idCategoria: '', disponibili: 'true', lingua: '1', listino: '6', risultati: '500',
+      codiceAzienda: process.env.TEST_VUDOO_CODE, idCategoria: '', disponibili: 'true', lingua: '1', listino: '6',
+      risultati: process.env.TEST_VUDOO_EXPECTED_RESULTS ?? '3000',
     });
     assert.equal(request.headers?.['X-BLToken'], undefined);
+    if (scenario === 'vudoo-timeout') throw new DOMException('Timeout simulato', 'TimeoutError');
     return { ok: true, headers: { get: () => 'application/xml' }, text: async () => scenario === 'vudoo-invalid' ? '<rss>' : catalogXml() };
   }
   if (url !== BASE_API_URL) {

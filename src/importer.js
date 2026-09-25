@@ -130,7 +130,7 @@ export async function runImport(prepared) {
     log(`ERROR: ${error.message}`);
   } finally {
     const { inventory, priceGroup, warehouse } = config;
-    log(`\nInventory: ${inventory ? `${inventory.name} (${inventory.inventory_id})` : 'non selezionato'}`);
+    log(`\n[RISULTATO IMPORT]\nInventory: ${inventory ? `${inventory.name} (${inventory.inventory_id})` : 'non selezionato'}`);
     log(`Gruppo prezzi: ${priceGroup ? `${priceGroup.name} (${priceGroup.price_group_id}, ${priceGroup.currency})` : 'non selezionato'}`);
     log(`Warehouse: ${warehouse ? `${warehouse.name} (${warehouse.id})` : warehouseStatus}`);
     log(`Prodotti letti: ${read}\nProdotti selezionati: ${selectedCount}\nProdotti processati: ${processed}\nCreati: ${created}\nAggiornati: ${updated}\nSaltati perché invariati: ${skipped}\nDuplicati nel feed saltati: ${feedDuplicates}\nSimulati: ${simulated}\nErrori: ${errors}`);
