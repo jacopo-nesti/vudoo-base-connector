@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env cli.js",
+    "electron": "electron electron/main.js",
+    "dev:renderer": "vite",
     "check": "node --env-file=.env check.js",
     "import": "node --env-file=.env tools/legacy/import-json.js",
     "sync": "node --env-file=.env tools/legacy/sync-json.js",
@@ -16,6 +18,13 @@
     "node": ">=22"
   },
   "dependencies": {
-    "fast-xml-parser": "5.11.1"
+    "fast-xml-parser": "5.11.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.4.5",
+    "vite": "^8.3.1"
   }
 }
