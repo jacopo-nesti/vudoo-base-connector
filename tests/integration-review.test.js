@@ -196,7 +196,88 @@ test('Electron: catalogo mancante e selezione vuota, invalida o sconosciuta non 
   assert.deepEqual(result.calls, []);
 });
 
-test('Electron: preload espone solo la funzione specifica per il preflight selettivo', async () => {
+test('Electron: selected import uses the active catalog, preserves duplicates, and does not refetch', async () => {
+  const selected = categorizedItem('SKU-SELECTED', 'Categoria A');
+  const excluded = categorizedItem('SKU-EXCLUDED', 'Categoria non mappata')
+    .replace('<g:price>3.20 EUR</g:price>', '<g:price>prezzo invalido</g:price>');
+  const parsed = parseCatalog(catalogXml(selected + selected + excluded));
+  let imported;
+  const result = await sandbox({
+    entry: '../electron/selectedImport.js', categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'true', TEST_MODE: 'false' },
+    action: async api => { imported = await api.importSelectedCatalog(parsed, ['SKU-SELECTED']); },
+  });
+  assert.equal(imported.ok, true);
+  assert.deepEqual({ selected: imported.selected, processed: imported.processed,
+    created: imported.created, updated: imported.updated, simulated: imported.simulated,
+    feedDuplicates: imported.feedDuplicates },
+  { selected: 1, processed: 1, created: 0, updated: 0, simulated: 1, feedDuplicates: 1 });
+  assert.equal(imported.categorySummary.totalFeedProducts, 2);
+  assert.deepEqual(Array.from(imported.errorSkus), []);
+  assert.deepEqual(Array.from(imported.uncertainSkus), []);
+  assert.doesNotMatch(JSON.stringify(imported), /test-only-token/);
+  assert.equal(result.calls.some(call => call.method === 'VUDOO_GET'), false);
+  assert.equal(result.calls.some(call => !call.method.startsWith('get')), false);
+  assert.equal(result.exitCode, 0);
+});
+
+test('Electron: real-mode import uses the core flow with a mocked Base API', async () => {
+  const parsed = parseCatalog(catalogXml(categorizedItem('SKU-REAL', 'Categoria A')));
+  let imported;
+  const result = await sandbox({
+    entry: '../electron/selectedImport.js', categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => { imported = await api.importSelectedCatalog(parsed, ['SKU-REAL']); },
+  });
+  assert.equal(imported.ok, true);
+  assert.equal(imported.created, 1);
+  assert.equal(imported.simulated, 0);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
+  assert.equal(result.calls.some(call => call.method === 'VUDOO_GET'), false);
+  assert.equal(result.exitCode, 0);
+});
+
+test('Electron: import rejects missing catalogs and invalid IDs before calling Base', async () => {
+  const parsed = parseCatalog(catalogXml());
+  const result = await sandbox({ entry: '../electron/selectedImport.js', action: async api => {
+    await assert.rejects(api.importSelectedCatalog(null, ['389578']), /Carica un catalogo/);
+    for (const ids of [null, [], [''], [123], ['UNKNOWN']]) {
+      await assert.rejects(api.importSelectedCatalog(parsed, ids),
+        /Seleziona almeno un prodotto|Selezione g:id|non presente/);
+    }
+  } });
+  assert.deepEqual(result.calls, []);
+});
+
+test('Electron: preflight and import failures remain distinct, structured, and token-free', async () => {
+  const unmapped = parseCatalog(catalogXml(categorizedItem('SKU-UNMAPPED', 'Categoria sconosciuta')));
+  const blocked = await sandbox({
+    entry: '../electron/selectedImport.js', categoryMappings: partialCategoryMappings,
+    action: async api => {
+      await assert.rejects(api.importSelectedCatalog(unmapped, ['SKU-UNMAPPED']), /IMPORT BLOCCATO/);
+    },
+  });
+  assert.deepEqual(blocked.calls, []);
+
+  const parsed = parseCatalog(catalogXml(categorizedItem('SKU-ERROR', 'Categoria A')));
+  let imported;
+  const failed = await sandbox({
+    entry: '../electron/selectedImport.js', categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    response: method => method === 'getInventoryProductsList' ? {
+      ok: true, json: async () => ({ status: 'ERROR', error_code: 'LOOKUP_FAILED', error_message: 'test-only-token' }),
+    } : undefined,
+    action: async api => { imported = await api.importSelectedCatalog(parsed, ['SKU-ERROR']); },
+  });
+  assert.equal(imported.ok, false);
+  assert.equal(imported.preflightError, null);
+  assert.equal(imported.errors, 1);
+  assert.deepEqual(Array.from(imported.errorSkus), ['SKU-ERROR']);
+  assert.doesNotMatch(JSON.stringify(imported), /test-only-token/);
+  assert.equal(failed.exitCode, 0);
+});
+
+test('Electron: preload exposes only specific IPC methods for selected preflight and import', async () => {
   const invocations = [];
   let exposed;
   vm.runInNewContext(fs.readFileSync(new URL('../electron/preload.cjs', import.meta.url), 'utf8'), {
@@ -212,8 +293,15 @@ test('Electron: preload espone solo la funzione specifica per il preflight selet
     },
   });
   await exposed.preflightSelected(['389578']);
-  assert.deepEqual(invocations, [['catalog:preflight-selected', ['389578']]]);
+  await exposed.importSelected(['389578']);
+  await exposed.getRuntimeMode();
+  assert.deepEqual(invocations, [
+    ['catalog:preflight-selected', ['389578']],
+    ['catalog:import-selected', ['389578']],
+    ['app:runtime-mode'],
+  ]);
   assert.equal('ipcRenderer' in exposed, false);
+  assert.equal('invoke' in exposed, false);
 });
 
 test('Core: runImport restituisce contatori DRY_RUN senza modificare process.exitCode', async () => {
