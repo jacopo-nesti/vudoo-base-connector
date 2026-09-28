@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import * as xml from 'fast-xml-parser';
 import { catalogXml, itemXml, extraFields, parameters as fieldParameters, parameterGroups, categoryMappings } from './fixtures/vudoo.js';
 import { normalizeVudooProduct } from '../src/vudooXml.js';
-import { parseCatalogXml } from '../src/converter.js';
+import { parseCatalog, parseCatalogXml } from '../src/converter.js';
 import { parseFeedNumber, normalizeProduct, buildBasePayload, buildBaseUpdatePayload, detectAndFilterDuplicates, sanitizeTextForBase } from '../src/products.js';
 
 const source = { id: 'SKU-A', title: 'Prodotto', price: '25,00 EUR', weight: '0.1 Kg', brand: 'Marca', product_type: 'Casa > Cura' };
@@ -155,6 +155,65 @@ test('Core: preflight di catalogo già preparato non ripete il fetch', async () 
     },
   });
   assert.equal(result.calls.filter(call => call.method === 'VUDOO_GET').length, 1);
+});
+
+test('Electron: preflight selettivo usa i record del catalogo attivo e restituisce un DTO senza secondo fetch', async () => {
+  const selected = categorizedItem('SKU-SELECTED', 'Categoria A');
+  const excluded = categorizedItem('SKU-EXCLUDED', 'Categoria non mappata')
+    .replace('<g:price>3.20 EUR</g:price>', '<g:price>prezzo invalido</g:price>');
+  const parsed = parseCatalog(catalogXml(selected + selected + excluded));
+  const result = await sandbox({
+    entry: '../electron/selectedPreflight.js', categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false' },
+    action: async api => {
+      const preflight = await api.preflightSelectedCatalog(parsed, ['SKU-SELECTED']);
+      assert.equal(preflight.supplier.id, 'TEST_SUPPLIER');
+      assert.equal(preflight.selection.selected, 1);
+      assert.equal(preflight.products.analyzed, 2);
+      assert.equal(preflight.products.importable, 2);
+      assert.equal(preflight.products.readyForBase, 1);
+      assert.equal(preflight.products.feedDuplicates, 1);
+      assert.equal(preflight.categories.unmapped, 0);
+      assert.deepEqual(JSON.parse(JSON.stringify(preflight)).selection,
+        { total: 2, selected: 1, excluded: 1 });
+      assert.equal('selectedProducts' in preflight, false);
+    },
+  });
+  assert.equal(result.calls.some(call => call.method === 'VUDOO_GET'), false);
+  assert.ok(result.calls.length > 0);
+  assert.equal(result.calls.every(call => call.method.startsWith('get')), true);
+});
+
+test('Electron: catalogo mancante e selezione vuota, invalida o sconosciuta non raggiungono Base', async () => {
+  const parsed = parseCatalog(catalogXml());
+  const result = await sandbox({ entry: '../electron/selectedPreflight.js', action: async api => {
+    await assert.rejects(api.preflightSelectedCatalog(null, ['389578']), /Carica un catalogo/);
+    for (const ids of [null, [], [''], [123], ['UNKNOWN']]) {
+      await assert.rejects(api.preflightSelectedCatalog(parsed, ids),
+        /Seleziona almeno un prodotto|Selezione g:id|non presente/);
+    }
+  } });
+  assert.deepEqual(result.calls, []);
+});
+
+test('Electron: preload espone solo la funzione specifica per il preflight selettivo', async () => {
+  const invocations = [];
+  let exposed;
+  vm.runInNewContext(fs.readFileSync(new URL('../electron/preload.cjs', import.meta.url), 'utf8'), {
+    require: specifier => {
+      assert.equal(specifier, 'electron');
+      return {
+        contextBridge: { exposeInMainWorld: (name, api) => {
+          assert.equal(name, 'electronAPI');
+          exposed = api;
+        } },
+        ipcRenderer: { invoke: (...args) => { invocations.push(args); return Promise.resolve({ ok: true }); } },
+      };
+    },
+  });
+  await exposed.preflightSelected(['389578']);
+  assert.deepEqual(invocations, [['catalog:preflight-selected', ['389578']]]);
+  assert.equal('ipcRenderer' in exposed, false);
 });
 
 test('Core: runImport restituisce contatori DRY_RUN senza modificare process.exitCode', async () => {

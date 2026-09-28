@@ -5,4 +5,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   checkEnvironment: () => ipcRenderer.invoke("environment:check"),
   fetchCatalog: (companyCode) =>
     ipcRenderer.invoke("catalog:fetch", companyCode),
+  preflightSelected: (selectedIds) =>
+    ipcRenderer.invoke("catalog:preflight-selected", selectedIds),
 });

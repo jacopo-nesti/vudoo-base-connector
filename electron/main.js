@@ -9,6 +9,8 @@ loadEnvFile(path.join(__dirname, "../.env"));
 
 const { runEnvironmentCheck } = await import("../src/checker.js");
 const { fetchParsedVudooCatalog } = await import("../src/vudooImport.js");
+const { redactToken } = await import("../src/logger.js");
+const { preflightSelectedCatalog } = await import("./selectedPreflight.js");
 
 let activeCatalog = null;
 
@@ -58,6 +60,14 @@ app.whenReady().then(() => {
       totalProducts: activeCatalog.products.length,
       products: productsForRenderer,
     };
+  });
+
+  ipcMain.handle("catalog:preflight-selected", async (_event, selectedIds) => {
+    try {
+      return { ok: true, result: await preflightSelectedCatalog(activeCatalog, selectedIds) };
+    } catch (error) {
+      return { ok: false, error: redactToken(error?.message ?? error) };
+    }
   });
 
   createWindow();

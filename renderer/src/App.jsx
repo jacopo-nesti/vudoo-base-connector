@@ -16,6 +16,9 @@ function App() {
 
     // Selezione prodotti
     const [selectedIds, setSelectedIds] = useState([]);
+    const [preflightResult, setPreflightResult] = useState(null);
+    const [preflightLoading, setPreflightLoading] = useState(false);
+    const [preflightError, setPreflightError] = useState("");
 
     async function handlePing() {
         const result = await window.electronAPI.ping()
@@ -38,6 +41,8 @@ function App() {
         setCatalogError("")
         setCatalog(null)
         setSelectedIds([])
+        setPreflightResult(null)
+        setPreflightError("")
 
         try {
             const result = await window.electronAPI.fetchCatalog(companyCode)
@@ -50,6 +55,8 @@ function App() {
     }
 
     function handleToggleProduct(productId) {
+        setPreflightResult(null);
+        setPreflightError("");
         setSelectedIds((currentIds) => {
             if (currentIds.includes(productId)) {
             return currentIds.filter((id) => id !== productId);
@@ -57,6 +64,22 @@ function App() {
 
             return [...currentIds, productId];
         });
+    }
+
+    async function handlePreflightSelected() {
+        setPreflightLoading(true);
+        setPreflightResult(null);
+        setPreflightError("");
+
+        try {
+            const response = await window.electronAPI.preflightSelected(selectedIds);
+            if (!response.ok) throw new Error(response.error);
+            setPreflightResult(response.result);
+        } catch (error) {
+            setPreflightError(error?.message ?? String(error));
+        } finally {
+            setPreflightLoading(false);
+        }
     }
 
   return (
@@ -105,7 +128,7 @@ function App() {
 
         <button
             onClick={handleFetchCatalog}
-            disabled={catalogLoading || !companyCode.trim()}
+            disabled={catalogLoading || preflightLoading || !companyCode.trim()}
         >
             {catalogLoading ? "Caricamente..." : "Carica catalogo"}
         </button>
@@ -128,6 +151,18 @@ function App() {
 
                 <p>Prodotti selezionati: {selectedIds.length}</p>
 
+                <button
+                    onClick={handlePreflightSelected}
+                    disabled={selectedIds.length === 0 || preflightLoading || catalogLoading}
+                >
+                    {preflightLoading ? "Preflight in corso..." : "Esegui preflight selezione"}
+                </button>
+
+                {preflightError && <p>Errore preflight: {preflightError}</p>}
+                {preflightResult && (
+                    <pre>{JSON.stringify(preflightResult, null, 2)}</pre>
+                )}
+
                 <hr />
 
                 {catalog.products.map((product) => (
@@ -136,6 +171,7 @@ function App() {
                                 type="checkbox"
                                 checked={selectedIds.includes(product.id)}
                                 onChange={() => handleToggleProduct(product.id)}
+                                disabled={preflightLoading || typeof product.id !== "string" || !product.id.trim()}
                             />
 
                         <p><strong>Sku: </strong>{product.sku}</p>
