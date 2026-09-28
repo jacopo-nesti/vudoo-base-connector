@@ -8,6 +8,9 @@ const __dirname = path.dirname(__filename);
 loadEnvFile(path.join(__dirname, "../.env"));
 
 const { runEnvironmentCheck } = await import("../src/checker.js");
+const { fetchParsedVudooCatalog } = await import("../src/vudooImport.js");
+
+let activeCatalog = null;
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -26,10 +29,35 @@ function createWindow() {
 
 app.whenReady().then(() => {
   ipcMain.handle("environment:check", async () => {
-  return await runEnvironmentCheck();
-});
+    return await runEnvironmentCheck();
+  });
   ipcMain.handle("app:ping", () => {
     return "pong";
+  });
+  ipcMain.handle("catalog:fetch", async (_event, companyCode) => {
+    if (typeof companyCode !== "string" || !companyCode.trim()) {
+      throw new Error("Codice azienda non valido");
+    }
+
+    const normalizedCompanyCode = companyCode.trim();
+    activeCatalog = null;
+    activeCatalog = await fetchParsedVudooCatalog(normalizedCompanyCode);
+
+    const productsForRenderer = activeCatalog.products.map((product) => ({
+      id: product.id,
+      sku: product.sku,
+      title: product.title,
+      brand: product.brand,
+      price: product.price,
+      category: product.product_type,
+      mpn: product.mpn,
+    }));
+
+    return {
+      channelTitle: activeCatalog.channelTitle,
+      totalProducts: activeCatalog.products.length,
+      products: productsForRenderer,
+    };
   });
 
   createWindow();
