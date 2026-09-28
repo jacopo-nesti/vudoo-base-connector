@@ -64,6 +64,201 @@ function categorizedItem(id, category, brand = 'Marca') {
     .replace(/<g:product_type>.*?<\/g:product_type>/, `<g:product_type>${category}</g:product_type>`);
 }
 
+test('Core: fetch e parsing restituiscono il catalogo sorgente senza preflight Base', async () => {
+  const result = await sandbox({ entry: '../src/vudooImport.js', action: async api => {
+    const parsed = await api.fetchParsedVudooCatalog('test-company');
+    assert.equal(parsed.channelTitle, 'Test Supplier');
+    assert.equal(parsed.products.length, 1);
+    assert.equal(parsed.products[0].id, '389578');
+    assert.equal(parsed.products[0].source, undefined);
+  } });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+});
+
+test('Core: g:id selezionato conserva tutti i record originali e importa con un solo fetch', async () => {
+  const item = categorizedItem('SKU-CHOSEN', 'Categoria A');
+  const excluded = categorizedItem('SKU-EXCLUDED', 'Categoria non mappata')
+    .replace('<g:price>3.20 EUR</g:price>', '<g:price>prezzo invalido</g:price>');
+  const result = await sandbox({ entry: '../src/vudooImport.js',
+    xml: catalogXml(item + item + excluded), categoryMappings: partialCategoryMappings,
+    action: async api => {
+      const parsed = await api.fetchParsedVudooCatalog('test-company');
+      const prepared = api.prepareSelectedVudooCatalog(parsed, ['SKU-CHOSEN']);
+      assert.equal(prepared.sources.length, 2);
+      assert.equal(prepared.sources[0], parsed.products[0]);
+      assert.equal(prepared.sources[1], parsed.products[1]);
+      assert.equal(prepared.uniqueProducts.length, 1);
+      assert.equal(prepared.selection.selected, 1);
+      const imported = await api.importPreparedVudooCatalog(prepared);
+      assert.equal(imported.ok, true);
+      assert.equal(imported.simulated, 1);
+      assert.equal(imported.feedDuplicates, 1);
+      assert.equal(imported.categorySummary.totalFeedProducts, 2);
+      assert.equal(imported.categorySummary.unmappedCategories, 0);
+    },
+  });
+  assert.equal(result.calls.filter(call => call.method === 'VUDOO_GET').length, 1);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 0);
+  assert.equal(result.exitCode, 0);
+});
+
+test('Core: selezione g:id vuota, non valida o sconosciuta si ferma prima del preflight', async () => {
+  const result = await sandbox({ entry: '../src/vudooImport.js', action: async api => {
+    const parsed = await api.fetchParsedVudooCatalog('test-company');
+    for (const ids of [[], [''], [123], ['UNKNOWN']]) {
+      assert.throws(() => api.prepareSelectedVudooCatalog(parsed, ids), /Selezione g:id|non presente/);
+    }
+  } });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+});
+
+test('Core: record No Name senza g:id resta fuori dalla selezione per ID della GUI', async () => {
+  const noId = categorizedItem('SKU-NO-ID', 'No name > No name')
+    .replace('<g:id>SKU-NO-ID</g:id>', '');
+  const result = await sandbox({ entry: '../src/vudooImport.js',
+    xml: catalogXml(categorizedItem('SKU-VALID', 'Categoria A') + noId),
+    action: async api => {
+      const parsed = await api.fetchParsedVudooCatalog('test-company');
+      const prepared = api.prepareSelectedVudooCatalog(parsed, ['SKU-VALID']);
+      assert.equal(prepared.sources.length, 1);
+      assert.equal(prepared.sources[0], parsed.products[0]);
+      assert.throws(() => api.prepareSelectedVudooCatalog(parsed, ['SKU-NO-ID']), /non presente/);
+    },
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+});
+
+test('Core: duplicati discordanti del g:id selezionato restano bloccanti', async () => {
+  const item = categorizedItem('SKU-SAME', 'Categoria A');
+  const conflicting = item.replace('<g:price>3.20 EUR</g:price>', '<g:price>4.20 EUR</g:price>');
+  const result = await sandbox({ entry: '../src/vudooImport.js', xml: catalogXml(item + conflicting),
+    action: async api => {
+      const parsed = await api.fetchParsedVudooCatalog('test-company');
+      assert.throws(() => api.prepareSelectedVudooCatalog(parsed, ['SKU-SAME']), /discordanti/);
+    },
+  });
+  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+});
+
+test('Core: preflight di catalogo già preparato non ripete il fetch', async () => {
+  const result = await sandbox({ entry: '../src/vudooImport.js',
+    xml: catalogXml(categorizedItem('SKU-SELECTED', 'Categoria A') +
+      categorizedItem('SKU-OTHER', 'Categoria non mappata')),
+    categoryMappings: partialCategoryMappings,
+    action: async api => {
+      const parsed = await api.fetchParsedVudooCatalog('test-company');
+      const prepared = api.prepareSelectedVudooCatalog(parsed, ['SKU-SELECTED']);
+      const preflight = await api.preflightPreparedVudooCatalog(prepared);
+      assert.equal(preflight.selectedProducts.length, 1);
+      assert.equal(preflight.selectedProducts[0].sku, 'SKU-SELECTED');
+      assert.equal(preflight.categoryAnalysis.unmappedCount, 0);
+    },
+  });
+  assert.equal(result.calls.filter(call => call.method === 'VUDOO_GET').length, 1);
+});
+
+test('Core: runImport restituisce contatori DRY_RUN senza modificare process.exitCode', async () => {
+  let imported;
+  const result = await sandbox({ entry: '../src/importer.js', action: async api => {
+    imported = await api.runImport();
+  } });
+  assert.equal(imported.ok, true);
+  assert.deepEqual({ read: imported.read, selected: imported.selected, processed: imported.processed,
+    created: imported.created, updated: imported.updated, unchanged: imported.unchanged,
+    simulated: imported.simulated, errors: imported.errors },
+  { read: 1, selected: 1, processed: 1, created: 0, updated: 0, unchanged: 0, simulated: 1, errors: 0 });
+  assert.deepEqual(Array.from(imported.errorSkus), []);
+  assert.deepEqual(Array.from(imported.uncertainSkus), []);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 0);
+});
+
+test('Core: errori import e preflight sono strutturati senza cambiare il processo', async () => {
+  let failed;
+  const itemError = await sandbox({ entry: '../src/importer.js', lookupError: true,
+    action: async api => { failed = await api.runImport(); },
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.errors, 1);
+  assert.deepEqual(Array.from(failed.errorSkus), ['SKU-A']);
+  assert.equal(itemError.exitCode, 0);
+
+  let blocked;
+  const preflightError = await sandbox({ entry: '../src/importer.js', env: { BASE_API_TOKEN: '' },
+    action: async api => { blocked = await api.runImport(); },
+  });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.preflightError, /BASE_API_TOKEN/);
+  assert.equal(preflightError.exitCode, 0);
+  assert.deepEqual(preflightError.calls, []);
+});
+
+test('Core: risultato import distingue CREATE, UPDATE, invariati ed esiti incerti', async () => {
+  for (const [options, field] of [
+    [{ env: { DRY_RUN: 'false' } }, 'created'],
+    [{ env: { DRY_RUN: 'false' }, existing: true, details: { ...details, prices: { 20: 24 } } }, 'updated'],
+    [{ env: { DRY_RUN: 'false' }, existing: true }, 'unchanged'],
+  ]) {
+    let imported;
+    const result = await sandbox({ entry: '../src/importer.js', ...options,
+      action: async api => { imported = await api.runImport(); },
+    });
+    assert.equal(imported.ok, true);
+    assert.equal(imported[field], 1, field);
+    assert.equal(result.exitCode, 0);
+  }
+
+  let uncertain;
+  const failed = await sandbox({ entry: '../src/importer.js', env: { DRY_RUN: 'false' },
+    response: method => method === 'addInventoryProduct' ? writeTimeout(method) : undefined,
+    action: async api => { uncertain = await api.runImport(); },
+  });
+  assert.equal(uncertain.ok, false);
+  assert.equal(uncertain.errors, 0);
+  assert.deepEqual(Array.from(uncertain.uncertainSkus), ['SKU-A']);
+  assert.equal(failed.exitCode, 0);
+});
+
+test('Core: diagnostica ambiente restituisce gli esiti senza esporre il token', async () => {
+  let check;
+  const valid = await sandbox({ entry: '../src/checker.js', action: async api => {
+    check = await api.runEnvironmentCheck();
+  } });
+  assert.equal(check.ok, true);
+  assert.ok(check.checks.some(item => item.title === 'BASE_API_TOKEN' && item.ok));
+  assert.ok(check.checks.some(item => item.title === 'Connessione Base.com & Inventory' && item.ok));
+  assert.doesNotMatch(JSON.stringify(check), /test-only-token/);
+  assert.equal(valid.exitCode, 0);
+
+  const invalid = await sandbox({ entry: '../src/checker.js', env: { BASE_API_TOKEN: '' },
+    action: async api => { check = await api.runEnvironmentCheck(); },
+  });
+  assert.equal(check.ok, false);
+  assert.ok(check.checks.some(item => item.title === 'BASE_API_TOKEN' && !item.ok));
+  assert.deepEqual(invalid.calls, []);
+});
+
+test('Core: errori API nei risultati strutturati mascherano il token Base', async () => {
+  const response = method => method === 'getInventories' ? {
+    ok: true, json: async () => ({ status: 'ERROR', error_code: 'TEST_ERROR', error_message: 'test-only-token' }),
+  } : undefined;
+  let check;
+  await sandbox({ entry: '../src/checker.js', response,
+    action: async api => { check = await api.runEnvironmentCheck(); },
+  });
+  assert.equal(check.ok, false);
+  assert.doesNotMatch(JSON.stringify(check), /test-only-token/);
+  assert.match(JSON.stringify(check), /TOKEN NASCOSTO/);
+
+  let imported;
+  await sandbox({ entry: '../src/importer.js', response,
+    action: async api => { imported = await api.runImport(); },
+  });
+  assert.equal(imported.ok, false);
+  assert.doesNotMatch(JSON.stringify(imported), /test-only-token/);
+  assert.match(imported.preflightError, /TOKEN NASCOSTO/);
+});
+
 test('Import selettivo: validazioni prodotto, categorie e Base vedono solo il subset', async () => {
   const invalid = categorizedItem('SKU-EXCLUDED', 'Categoria non mappata')
     .replace('<g:price>3.20 EUR</g:price>', '<g:price>prezzo invalido</g:price>');

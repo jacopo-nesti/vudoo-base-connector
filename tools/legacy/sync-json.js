@@ -13,7 +13,7 @@ async function main() {
   const preflight = await runPreflightCheck();
 
   log('\n--- Step 3: Importazione / Aggiornamento prodotti ---');
-  process.exitCode = await runImport(preflight);
+  process.exitCode = (await runImport(preflight)).ok ? 0 : 1;
 }
 
 main().catch(error => {

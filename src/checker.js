@@ -1,5 +1,5 @@
 import { token, testMode, dryRun, getBaseApiRequestsPerMinute, getUnmappedCategoryPolicy } from './config.js';
-import { log } from './logger.js';
+import { log, redactToken } from './logger.js';
 import { getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi.js';
 
 export async function runEnvironmentCheck() {
@@ -8,10 +8,12 @@ export async function runEnvironmentCheck() {
   log('========================================\n');
 
   let hasErrors = false;
+  const checks = [];
 
   function report(title, success, details = '') {
     const icon = success ? '✅' : '❌';
     log(`${icon} ${title}${details ? ` -> ${details}` : ''}`);
+    checks.push({ title, ok: success, details: redactToken(details) });
     if (!success) hasErrors = true;
   }
 
@@ -67,8 +69,8 @@ export async function runEnvironmentCheck() {
   log('\n========================================');
   if (hasErrors) {
     log('❌ DIAGNOSTICA FALLITA: Correggi gli errori sopra indicati.');
-    return 1;
+    return { ok: false, checks };
   }
   log('✅ DIAGNOSTICA COMPLETATA CON SUCCESSO!');
-  return 0;
+  return { ok: true, checks };
 }

@@ -1,5 +1,5 @@
 import { token, testMode, dryRun } from './config.js';
-import { log } from './logger.js';
+import { log, redactToken } from './logger.js';
 import { sendProductToBase, findProductInBase, getBaseProductDetails, updateProductInBase } from './baseApi.js';
 import { normalizeProduct, buildBasePayload, hasProductChanged, assertVudooSkuCompatibility } from './products.js';
 import { getManufacturerMap, ensureManufacturer } from './manufacturers.js';
@@ -22,15 +22,40 @@ export async function runImport(prepared) {
   const errorSkus = [];
   const uncertainSkus = [];
   let warehouseStatus = 'non selezionato';
+  let preflightError = null;
 
   // FASE PREFLIGHT: Esecuzione controlli preliminari
   let preflightData;
+  const result = () => ({
+    ok: preflightError === null && errors === 0 && uncertainSkus.length === 0,
+    preflightError,
+    read,
+    selected: selectedCount,
+    processed,
+    created,
+    updated,
+    unchanged: skipped,
+    simulated,
+    feedDuplicates,
+    errors,
+    errorSkus: [...errorSkus],
+    uncertainSkus: [...uncertainSkus],
+    eanWarningsCount: preflightData?.eanWarningsCount ?? 0,
+    categorySummary: preflightData?.categoryAnalysis ? {
+      totalFeedProducts: preflightData.categoryAnalysis.totalProducts,
+      importableProducts: preflightData.categoryAnalysis.importableProducts,
+      missingSourceCategoryProducts: preflightData.categoryAnalysis.missingSourceCategoryProducts,
+      missingSourceCategoryUnrecordableProducts: preflightData.categoryAnalysis.missingSourceCategoryUnrecordableProducts,
+      unmappedValidCategoryProducts: preflightData.categoryAnalysis.unmappedValidCategoryProducts,
+      unmappedCategories: preflightData.categoryAnalysis.unmappedCount,
+    } : null,
+  });
   try {
     preflightData = prepared ?? await runPreflightCheck();
   } catch (error) {
     log(`ERROR [PREFLIGHT]: ${error.message}`);
-    process.exitCode = 1;
-    return 1; // Interrompe il processo ed evita qualsiasi scrittura/elaborazione
+    preflightError = redactToken(error.message);
+    return result(); // Interrompe il processo ed evita qualsiasi scrittura/elaborazione
   }
 
   // Assegnazione risorse già convalidate dal Preflight Check
@@ -153,7 +178,6 @@ export async function runImport(prepared) {
     if (errorSkus.length) log(`SKU con errori: ${errorSkus.join(', ')}`);
     log(`Esiti incerti: ${uncertainSkus.length}`);
     if (uncertainSkus.length) log(`SKU con esito incerto: ${uncertainSkus.join(', ')}`);
-    if (errors > 0 || uncertainSkus.length > 0) process.exitCode = 1;
   }
-  return errors > 0 || uncertainSkus.length > 0 ? 1 : 0;
+  return result();
 }

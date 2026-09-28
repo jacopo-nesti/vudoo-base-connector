@@ -1,8 +1,8 @@
 import { runEnvironmentCheck } from './src/checker.js';
 
 runEnvironmentCheck()
-  .then(code => {
-    process.exitCode = code;
+  .then(result => {
+    process.exitCode = result.ok ? 0 : 1;
   })
   .catch(error => {
     console.error(`\n❌ ERRORE CRITICO DIAGNOSTICA: ${error.message}`);
