@@ -5,17 +5,26 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env cli.js",
+    "electron": "electron electron/main.js",
+    "dev:renderer": "vite",
     "check": "node --env-file=.env check.js",
     "import": "node --env-file=.env tools/legacy/import-json.js",
     "sync": "node --env-file=.env tools/legacy/sync-json.js",
     "convert": "node tools/legacy/convert-json.js",
     "productor": "node --env-file=.env tools/legacy/productor-json.js",
-    "test": "node --experimental-vm-modules --test tests/integration-review.test.js tests/cli.test.js tests/vudoo-xml.test.js tests/category-normalizer.test.js tests/category-storage.test.js tests/catalog-hardening.test.js tests/product-selector.test.js"
+    "test": "node --experimental-vm-modules --test tests/integration-review.test.js tests/cli.test.js tests/vudoo-xml.test.js tests/category-normalizer.test.js tests/category-storage.test.js tests/catalog-hardening.test.js tests/product-selector.test.js tests/electron-settings.test.js tests/electron-write-guard.test.js tests/import-timing.test.js tests/catalog-filters.test.js"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "fast-xml-parser": "5.11.1"
+    "fast-xml-parser": "5.11.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.4.5",
+    "vite": "^8.3.1"
   }
 }

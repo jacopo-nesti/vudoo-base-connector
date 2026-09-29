@@ -2,6 +2,8 @@
 
 Il comportamento dell'applicazione viene configurato tramite le variabili d'ambiente definite nel file `.env`. Usa `.env.example` come modello e copialo in `.env`: il file di esempio deve rimanere versionato e non deve contenere token reali.
 
+Nell'app desktop Electron, il pannello **Impostazioni** salva soltanto le opzioni operative e i limiti in `settings.json` nella directory dati standard dell'app, fuori dal repository. All'avvio vengono letti `.env`, poi gli override salvati; questi prevalgono sui valori corrispondenti di `.env` prima del caricamento del core. Il token Base.com rimane esclusivamente nel backend e non è configurabile nella GUI. Salvare o ripristinare le impostazioni richiede un riavvio quando i valori differiscono da quelli attivi. Il ripristino elimina gli override senza modificare `.env`. Un file assente usa direttamente `.env` e i default applicativi; un file JSON non valido viene ignorato con un avviso nella GUI. Valori `.env` non validi vengono segnalati e non sono sostituiti silenziosamente nel core.
+
 ## Variabili d'Ambiente Principali
 
 * **`BASE_API_TOKEN`**: token di autenticazione Base.com obbligatorio;

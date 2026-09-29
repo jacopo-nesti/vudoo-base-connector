@@ -13,6 +13,9 @@ let requestQueue = Promise.resolve();
 let nextRequestAt = 0;
 const requestTimes = [];
 const uncertainWrites = new Map();
+export const BASE_PRODUCT_PAGE_SIZE = 1000;
+// Internal request size, not a documented Base.com API limit.
+export const BASE_PRODUCT_DETAILS_CHUNK_SIZE = 100;
 
 async function waitForRequestSlot(windowMs, safeLimit, softLimit) {
   while (true) {
@@ -234,6 +237,62 @@ export async function getBaseProductDetails(inventoryId, productId) {
     throw new Error(`Dettagli del prodotto ${productId} mancanti.`);
   }
   return product;
+}
+
+export async function getBaseProductSummaries(inventoryId) {
+  const productsBySku = new Map();
+  const seenIds = new Set();
+  for (let page = 1; ; page++) {
+    const data = await callBase('getInventoryProductsList', {
+      inventory_id: inventoryId, page, include_variants: true, filter_sort: 'id ASC',
+    });
+    if (!data.products || typeof data.products !== 'object' || Array.isArray(data.products)) {
+      throw new Error('getInventoryProductsList: elenco prodotti non valido.');
+    }
+    const entries = Object.entries(data.products);
+    for (const [key, product] of entries) {
+      if (!product || typeof product !== 'object' || Array.isArray(product)) {
+        throw new Error('getInventoryProductsList: prodotto non valido nella risposta.');
+      }
+      const id = Number(product?.id ?? product?.product_id ?? key);
+      if (!Number.isSafeInteger(id) || id <= 0 || String(id) !== key || seenIds.has(id)) {
+        throw new Error('Identita prodotto non valida o ripetuta nella risposta Base.com.');
+      }
+      seenIds.add(id);
+      if (product.sku == null || product.sku === '' ||
+          (typeof product.sku === 'string' && !product.sku.trim())) continue;
+      if (typeof product.sku !== 'string') {
+        throw new Error('getInventoryProductsList: prodotto con SKU non valido.');
+      }
+      productsBySku.set(product.sku, productsBySku.has(product.sku)
+        ? null : { ...product, product_id: id });
+    }
+    if (entries.length < BASE_PRODUCT_PAGE_SIZE) break;
+  }
+  return productsBySku;
+}
+
+export async function getBaseProductsData(inventoryId, productIds) {
+  const detailsById = new Map();
+  const uniqueIds = [...new Set(productIds)];
+  for (const id of uniqueIds) {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('product_id non valido per il caricamento dettagli Base.com.');
+  }
+  for (let offset = 0; offset < uniqueIds.length; offset += BASE_PRODUCT_DETAILS_CHUNK_SIZE) {
+    const ids = uniqueIds.slice(offset, offset + BASE_PRODUCT_DETAILS_CHUNK_SIZE);
+    const data = await callBase('getInventoryProductsData', { inventory_id: inventoryId, products: ids });
+    if (!data.products || typeof data.products !== 'object' || Array.isArray(data.products)) {
+      throw new Error('getInventoryProductsData: risposta prodotti non valida.');
+    }
+    for (const id of ids) {
+      const product = data.products[id];
+      if (!product || typeof product !== 'object' || Array.isArray(product)) {
+        throw new Error(`Dettagli del prodotto ${id} mancanti.`);
+      }
+      detailsById.set(id, product);
+    }
+  }
+  return detailsById;
 }
 
 export async function updateProductInBase(productId, product, config, existing) {

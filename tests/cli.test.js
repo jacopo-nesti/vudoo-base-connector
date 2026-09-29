@@ -117,8 +117,28 @@ test('CLI: verifica ambiente senza cataloghi locali', async () => {
     const result = await runProcess(directory, 'cli.js', ['0', '6']);
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /DIAGNOSTICA COMPLETATA CON SUCCESSO/);
-    assert.match(result.output, /Rate limiter Base\.com.*100 richieste\/minuto/);
+    assert.match(result.output, /Rate limiter Base\.com.*95 richieste\/minuto/);
     assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
+  });
+});
+
+test('CLI: diagnostica fallita conserva exit code 1 con risultati strutturati nel core', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['0', '6'], { BASE_API_TOKEN: '' });
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /BASE_API_TOKEN.*Mancante o vuoto/);
+    assert.match(result.output, /DIAGNOSTICA FALLITA/);
+  });
+});
+
+test('Comando check.js: exit code del wrapper resta coerente con la diagnostica', async () => {
+  await withFixture(async directory => {
+    const valid = await runProcess(directory, 'check.js');
+    assert.equal(valid.code, 0, valid.output);
+    assert.match(valid.output, /DIAGNOSTICA COMPLETATA CON SUCCESSO/);
+    const invalid = await runProcess(directory, 'check.js', [], { BASE_API_TOKEN: '' });
+    assert.equal(invalid.code, 1, invalid.output);
+    assert.match(invalid.output, /DIAGNOSTICA FALLITA/);
   });
 });
 
@@ -156,6 +176,18 @@ test('CLI: import completo non apre il selettore e usa il catalogo remoto in DRY
     assert.match(result.output, /DRY_RUN: nessuna scrittura/);
     assert.doesNotMatch(result.output, /SELEZIONE PRODOTTI|Aggiungi tramite codice/);
     assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
+  });
+});
+
+test('CLI: errore nella fase import conserva exit code 1 dopo il risultato strutturato', async () => {
+  await withFixture(async directory => {
+    const result = await runProcess(directory, 'cli.js', ['3', 'test-company', '6'], {
+      TEST_VUDOO_CODE: 'test-company', TEST_BASE_SCENARIO: 'import-error', BASE_API_READ_ATTEMPTS: '1',
+    });
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /\[PREFLIGHT\] Controlli preliminari completati/);
+    assert.match(result.output, /TEST_IMPORT_ERROR/);
+    assert.match(result.output, /\[RISULTATO IMPORT\]/);
   });
 });
 
@@ -279,5 +311,18 @@ test('Utility legacy: sync locale resta disponibile e protetto da DRY_RUN', asyn
     assert.match(result.output, /--- Step 2: Preflight Check/);
     assert.match(result.output, /--- Step 3: Importazione/);
     assert.match(result.output, /DRY_RUN: nessuna scrittura/);
+  }, { legacyCatalog: true });
+});
+
+test('Utility legacy: import JSON assegna il codice di uscita nel wrapper', async () => {
+  await withFixture(async directory => {
+    const converted = await runProcess(directory, 'tools/legacy/convert-json.js');
+    assert.equal(converted.code, 0, converted.output);
+    const imported = await runProcess(directory, 'tools/legacy/import-json.js');
+    assert.equal(imported.code, 0, imported.output);
+    assert.match(imported.output, /\[RISULTATO IMPORT\]/);
+    const blocked = await runProcess(directory, 'tools/legacy/import-json.js', [], { BASE_API_TOKEN: '' });
+    assert.equal(blocked.code, 1, blocked.output);
+    assert.match(blocked.output, /ERROR \[PREFLIGHT\]/);
   }, { legacyCatalog: true });
 });

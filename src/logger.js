@@ -1,6 +1,10 @@
 import { token } from './config.js';
 
-export function log(message) {
+export function redactToken(message) {
   const text = String(message);
-  console.log(token ? text.replaceAll(token, '[TOKEN NASCOSTO]') : text);
+  return token ? text.replaceAll(token, '[TOKEN NASCOSTO]') : text;
+}
+
+export function log(message) {
+  console.log(redactToken(message));
 }

@@ -20,7 +20,7 @@ export async function runOperation(name, codiceAzienda, options = {}) {
   }
   if (name === 'check') {
     try {
-      return await runEnvironmentCheck();
+      return (await runEnvironmentCheck()).ok ? 0 : 1;
     } catch (error) {
       log(`\n❌ ERRORE DIAGNOSTICA: ${error.message}`);
       return 1;

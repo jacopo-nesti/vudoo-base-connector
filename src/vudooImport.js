@@ -17,7 +17,7 @@ import {
 import { recordNoNameProducts, noNameReportPath } from './noNameReport.js';
 import { sourceIdentity, selectedProducts, selectionSummary } from './productSelector.js';
 
-export async function loadVudooCatalog(codiceAzienda, options = {}) {
+export async function fetchParsedVudooCatalog(codiceAzienda) {
   const results = getVudooResultsConfig();
   const timeout = getVudooTimeoutConfig();
   if (results.invalid) log(`[VUDOO] WARNING: VUDOO_RESULTS_LIMIT non valido: uso il default di ${results.limit}.`);
@@ -29,8 +29,10 @@ export async function loadVudooCatalog(codiceAzienda, options = {}) {
   const size = (Buffer.byteLength(xml, 'utf8') / 1000000).toFixed(2);
   const parsed = parseCatalog(xml);
   log(`Catalogo XML recuperato.\nDurata: ${duration} s\nDimensione XML: ${size} MB\nProdotti ricevuti: ${parsed.products.length}`);
-  const requestedSources = options.selectSources ? await options.selectSources(parsed.products) : parsed.products;
-  if (requestedSources === null) return null;
+  return parsed;
+}
+
+function prepareVudooSources(parsed, requestedSources, options) {
   const sourceSet = new Set(parsed.products);
   if (!Array.isArray(requestedSources) || requestedSources.some(source => !sourceSet.has(source))) {
     throw new Error('Selezione prodotti non valida.');
@@ -49,10 +51,40 @@ export async function loadVudooCatalog(codiceAzienda, options = {}) {
   return catalog;
 }
 
-export async function preflightVudooCatalog(codiceAzienda, options = {}) {
+export function prepareSelectedVudooCatalog(parsed, selectedIds) {
+  if (!Array.isArray(parsed?.products)) throw new Error('Catalogo Vudoo parsato non valido.');
+  if (!Array.isArray(selectedIds) || selectedIds.length === 0 ||
+      selectedIds.some(id => typeof id !== 'string' || !id.trim())) {
+    throw new Error('Selezione g:id vuota o non valida.');
+  }
+  const ids = new Set(selectedIds);
+  const availableIds = new Set(parsed.products
+    .filter(source => typeof source?.id === 'string' && source.id.trim())
+    .map(source => source.id));
+  for (const id of ids) {
+    if (!availableIds.has(id)) throw new Error(`g:id selezionato non presente nel catalogo: ${id}.`);
+  }
+  const sources = parsed.products.filter(source => ids.has(source?.id));
+  return prepareVudooSources(parsed, sources, { skipMissingSourceCategory: true });
+}
+
+export function prepareFullVudooCatalog(parsed, { skipMissingSourceCategory = true } = {}) {
+  if (!Array.isArray(parsed?.products)) throw new Error('Catalogo Vudoo parsato non valido.');
+  return prepareVudooSources(parsed, parsed.products, { skipMissingSourceCategory });
+}
+
+export async function loadVudooCatalog(codiceAzienda, options = {}) {
+  const parsed = await fetchParsedVudooCatalog(codiceAzienda);
+  const requestedSources = options.selectSources ? await options.selectSources(parsed.products) : parsed.products;
+  if (requestedSources === null) return null;
+  return prepareVudooSources(parsed, requestedSources, options);
+}
+
+export async function preflightPreparedVudooCatalog(catalog) {
+  if (!Array.isArray(catalog?.products) || !Array.isArray(catalog.uniqueProducts)) {
+    throw new Error('Catalogo Vudoo preparato non valido.');
+  }
   const categoryPolicy = getUnmappedCategoryPolicy();
-  const catalog = await loadVudooCatalog(codiceAzienda, { ...options, skipMissingSourceCategory: true });
-  if (catalog === null) return null;
   const mappings = await loadCategoryMappings();
   const categories = analyzeCatalogCategories(catalog, mappings);
   categories.policy = categoryPolicy;
@@ -110,8 +142,25 @@ export async function preflightVudooCatalog(codiceAzienda, options = {}) {
   return preflight;
 }
 
+export async function preflightVudooCatalog(codiceAzienda, options = {}) {
+  // Conserva il controllo della policy prima del fetch nel percorso CLI esistente.
+  getUnmappedCategoryPolicy();
+  const catalog = await loadVudooCatalog(codiceAzienda, { ...options, skipMissingSourceCategory: true });
+  if (catalog === null) return null;
+  return preflightPreparedVudooCatalog(catalog);
+}
+
+export async function importPreparedVudooCatalog(catalog) {
+  return runImport(await preflightPreparedVudooCatalog(catalog));
+}
+
 export async function syncVudooManufacturers(codiceAzienda, options = {}) {
   const catalog = await loadVudooCatalog(codiceAzienda, options);
+  return syncPreparedVudooManufacturers(catalog);
+}
+
+export async function syncPreparedVudooManufacturers(catalog) {
+  if (!Array.isArray(catalog?.uniqueProducts)) throw new Error('Catalogo Vudoo preparato non valido.');
   await syncManufacturers(catalog.uniqueProducts);
   return 0;
 }
@@ -119,5 +168,6 @@ export async function syncVudooManufacturers(codiceAzienda, options = {}) {
 export async function importVudooCatalog(codiceAzienda, options = {}) {
   const preflight = await preflightVudooCatalog(codiceAzienda, options);
   if (preflight === null) return 0;
-  return await runImport(preflight);
+  const result = await runImport(preflight);
+  return result.ok ? 0 : 1;
 }
