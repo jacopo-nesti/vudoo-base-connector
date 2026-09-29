@@ -113,7 +113,11 @@ async function bootstrap() {
       },
     });
 
-    window.loadURL("http://localhost:5173");
+    if (app.isPackaged) {
+      window.loadFile(path.join(__dirname, "../renderer/dist/index.html"));
+    } else {
+      window.loadURL("http://localhost:5173");
+    }
   }
 
   function startDesktopApp() {

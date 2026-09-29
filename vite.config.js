@@ -4,5 +4,6 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   root: "renderer",
+  base: "./",
   plugins: [react(), tailwindcss()],
 });

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env cli.js",
-    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev": "concurrently \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
     "dev:electron": "wait-on http://localhost:5173 && electron electron/main.js",
     "build": "vite build",
