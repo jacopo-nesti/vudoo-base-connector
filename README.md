@@ -43,6 +43,10 @@ Prima di avviare lo script configura almeno `BASE_API_TOKEN`, `TEST_MODE` e `DRY
 
 Per il dettaglio completo consulta la [Guida alla Configurazione](./docs/configurazione.md).
 
+### Impostazioni dell'app desktop
+
+La CLI continua a usare `.env`. L'app Electron carica `.env` all'avvio e poi applica le impostazioni salvate in `settings.json` nella directory dati standard dell'app (`app.getPath('userData')`). Il file rimane fuori dal repository e non contiene il token Base.com. Apri **Impostazioni** nella GUI per usare i valori predefiniti, personalizzare le opzioni o ripristinarle. Le modifiche salvate si applicano al core dopo il riavvio dell'app; la modalità simulazione mostrata durante la sessione indica sempre quella realmente attiva. Il ripristino elimina gli override e torna ai valori di `.env` o ai default applicativi. Valori `.env` non validi restano errori di configurazione del core finché non vengono corretti o sostituiti da impostazioni valide.
+
 ## 📂 Struttura Attuale delle Cartelle e dei Moduli
 
 Il progetto è organizzato in modo modulare: la CLI è l'entry point principale, la logica runtime è in `src/` e le utility del precedente flusso locale sono in `tools/legacy/`:

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import SettingsPanel from "./SettingsPanel.jsx";
 
 const environmentLabels = {
     BASE_API_TOKEN: "Credenziali Base.com",
@@ -35,6 +36,7 @@ function App() {
     const [importResult, setImportResult] = useState(null);
     const [importLoading, setImportLoading] = useState(false);
     const [importError, setImportError] = useState("");
+    const [showSettings, setShowSettings] = useState(false);
 
     useEffect(() => {
         if (!window.electronAPI?.getRuntimeMode) {
@@ -173,6 +175,14 @@ function App() {
         )}
         {dryRunMode === undefined && !runtimeModeError && <p>Verifica della modalità di importazione in corso...</p>}
         {runtimeModeError && <p role="alert">{runtimeModeError}</p>}
+
+        <hr />
+
+        <h2>Impostazioni</h2>
+        <button type="button" onClick={() => setShowSettings(current => !current)} disabled={importLoading}>
+            {showSettings ? "Chiudi impostazioni" : "Apri impostazioni"}
+        </button>
+        {showSettings && <SettingsPanel />}
 
         <hr />
 
