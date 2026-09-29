@@ -1,7 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import SettingsPanel from "./SettingsPanel.jsx";
 import { PreflightSummary, ImportSummary } from "./CatalogResults.jsx";
 import { estimateImportDurationMs, formatDuration } from "./importTiming.js";
+import {
+    filterCatalogProducts, filterOptions, isSelectableId,
+    toggleSelectedId, selectFilteredIds, deselectFilteredIds,
+    clearSelectedIds, resetCatalogControls, getSelectedProducts,
+    selectionChange, undoSelectionChange, isSelectionUndoShortcut, variantDetails,
+} from "./catalogFilters.js";
 
 const environmentLabels = {
     BASE_API_TOKEN: "Credenziali Base.com",
@@ -35,6 +41,10 @@ function App() {
 
     // Product selection and preflight
     const [selectedIds, setSelectedIds] = useState([]);
+    const [previousSelectedIds, setPreviousSelectedIds] = useState(null);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [categoryFilter, setCategoryFilter] = useState("");
+    const [brandFilter, setBrandFilter] = useState("");
     const [preflightResult, setPreflightResult] = useState(null);
     const [preflightLoading, setPreflightLoading] = useState(false);
     const [preflightError, setPreflightError] = useState("");
@@ -53,6 +63,20 @@ function App() {
     const [showSettings, setShowSettings] = useState(false);
     const catalogBusy = catalogLoading || preflightLoading || importLoading ||
         fullPreflightLoading || fullImportLoading || manufacturerSyncLoading;
+    const categories = useMemo(() => filterOptions(catalog?.products ?? [], 'category'), [catalog]);
+    const brands = useMemo(() => filterOptions(catalog?.products ?? [], 'brand'), [catalog]);
+    const filteredProducts = useMemo(() => filterCatalogProducts(catalog?.products ?? [], {
+        searchQuery, categoryFilter, brandFilter,
+    }), [catalog, searchQuery, categoryFilter, brandFilter]);
+    const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+    const selectedProducts = useMemo(() => getSelectedProducts(catalog?.products ?? [], selectedIds),
+        [catalog, selectedIds]);
+    const visibleSelectedCount = useMemo(() => new Set(filteredProducts
+        .map(({ product }) => product.id).filter(id => selectedIdSet.has(id))).size,
+    [filteredProducts, selectedIdSet]);
+    const selectableVisibleCount = useMemo(() => new Set(filteredProducts
+        .map(({ product }) => product.id).filter(isSelectableId)).size, [filteredProducts]);
+    const hasActiveFilters = Boolean(searchQuery.trim() || categoryFilter || brandFilter);
 
     useEffect(() => {
         if (!window.electronAPI?.getRuntimeMode) {
@@ -76,6 +100,16 @@ function App() {
         return () => { active = false; };
     }, []);
 
+    useEffect(() => {
+        function handleKeyDown(event) {
+            if (catalogBusy || previousSelectedIds === null || !isSelectionUndoShortcut(event)) return;
+            event.preventDefault();
+            undoLastSelectionChange();
+        }
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [catalogBusy, previousSelectedIds, selectedIds]);
+
     async function handlePing() {
         const result = await window.electronAPI.ping()
         setResponse(result)
@@ -96,7 +130,12 @@ function App() {
         setCatalogLoading(true)
         setCatalogError("")
         setCatalog(null)
-        setSelectedIds([])
+        const reset = resetCatalogControls()
+        setSelectedIds(reset.selectedIds)
+        setPreviousSelectedIds(null)
+        setSearchQuery(reset.searchQuery)
+        setCategoryFilter(reset.categoryFilter)
+        setBrandFilter(reset.brandFilter)
         setPreflightResult(null)
         setPreflightError("")
         setImportResult(null)
@@ -118,18 +157,31 @@ function App() {
         }
     }
 
-    function handleToggleProduct(productId) {
+    function updateSelection(nextIds) {
+        const change = selectionChange(selectedIds, nextIds);
+        if (!change) return;
+        setPreviousSelectedIds(change.previousSelectedIds);
+        setSelectedIds(change.selectedIds);
+        invalidateSelectedResults();
+    }
+
+    function invalidateSelectedResults() {
         setPreflightResult(null);
         setPreflightError("");
         setImportResult(null);
         setImportError("");
-        setSelectedIds((currentIds) => {
-            if (currentIds.includes(productId)) {
-            return currentIds.filter((id) => id !== productId);
-            }
+    }
 
-            return [...currentIds, productId];
-        });
+    function undoLastSelectionChange() {
+        const change = undoSelectionChange(previousSelectedIds);
+        if (!change) return;
+        setSelectedIds(change.selectedIds);
+        setPreviousSelectedIds(change.previousSelectedIds);
+        invalidateSelectedResults();
+    }
+
+    function handleToggleProduct(productId) {
+        updateSelection(toggleSelectedId(selectedIds, productId));
     }
 
     async function handlePreflightSelected() {
@@ -372,7 +424,78 @@ function App() {
                 </p>
                 {catalog.durationMs != null && <p>Catalogo caricato in {formatDuration(catalog.durationMs)}.</p>}
 
-                <p>Prodotti selezionati: {selectedIds.length}</p>
+                <section aria-label="Ricerca e selezione prodotti">
+                    <label>
+                        Cerca prodotti...{' '}
+                        <input type="search" value={searchQuery}
+                            onChange={event => setSearchQuery(event.target.value)}
+                            placeholder="Cerca prodotti..." />
+                    </label>{' '}
+                    <label>
+                        Categoria{' '}
+                        <select value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}>
+                            <option value="">Tutte le categorie</option>
+                            {categories.map(category => <option key={category} value={category}>{category}</option>)}
+                        </select>
+                    </label>{' '}
+                    <label>
+                        Brand{' '}
+                        <select value={brandFilter} onChange={event => setBrandFilter(event.target.value)}>
+                            <option value="">Tutti i brand</option>
+                            {brands.map(brand => <option key={brand} value={brand}>{brand}</option>)}
+                        </select>
+                    </label>{' '}
+                    <button type="button" onClick={() => {
+                        setSearchQuery(""); setCategoryFilter(""); setBrandFilter("");
+                    }} disabled={!hasActiveFilters}>Azzera filtri</button>
+
+                    <p>{catalog.totalProducts} prodotti nel catalogo · {filteredProducts.length} prodotti visualizzati · {selectedIds.length} prodotti selezionati</p>
+                    {selectedIds.length > visibleSelectedCount && (
+                        <p>{selectedIds.length - visibleSelectedCount} prodotti selezionati non sono visibili con i filtri attuali.</p>
+                    )}
+                    <button type="button" disabled={catalogBusy || selectableVisibleCount === 0 || visibleSelectedCount === selectableVisibleCount}
+                        onClick={() => updateSelection(selectFilteredIds(selectedIds, filteredProducts))}>
+                        Seleziona tutti i risultati
+                    </button>{' '}
+                    <button type="button" disabled={catalogBusy || visibleSelectedCount === 0}
+                        onClick={() => {
+                            if (visibleSelectedCount === 0 || !window.confirm(
+                                `Vuoi deselezionare ${visibleSelectedCount} prodotti selezionati tra quelli visualizzati?`
+                            )) return;
+                            updateSelection(deselectFilteredIds(selectedIds, filteredProducts));
+                        }}>
+                        Deseleziona risultati
+                    </button>{' '}
+                    <button type="button" disabled={catalogBusy || selectedIds.length === 0}
+                        onClick={() => {
+                            if (!window.confirm(
+                                `Vuoi rimuovere tutti i prodotti dalla selezione?\nProdotti da rimuovere: ${selectedIds.length}.`
+                            )) return;
+                            updateSelection(clearSelectedIds(selectedIds));
+                        }}>Svuota selezione</button>{' '}
+                    <button type="button" disabled={catalogBusy || previousSelectedIds === null}
+                        onClick={undoLastSelectionChange}>Annulla ultima modifica</button>
+                </section>
+
+                <details>
+                    <summary>Visualizza prodotti selezionati ({selectedIds.length})</summary>
+                    {selectedProducts.length === 0 && <p>Nessun prodotto selezionato.</p>}
+                    {selectedProducts.map(product => (
+                        <div key={product.id}>
+                            <p><strong>Titolo: </strong>{product.title}</p>
+                            <p><strong>SKU Vudoo: </strong>{product.sku}</p>
+                            <p><strong>Brand: </strong>{product.brand}</p>
+                            {variantDetails(product).map(([label, value]) => (
+                                <p key={label}><strong>{label}: </strong>{value}</p>
+                            ))}
+                            <p><strong>Prezzo: </strong>{product.price}</p>
+                            <button type="button" disabled={catalogBusy}
+                                onClick={() => updateSelection(toggleSelectedId(selectedIds, product.id))}>
+                                Rimuovi
+                            </button>
+                        </div>
+                    ))}
+                </details>
 
                 <section>
                     <h4>Catalogo completo</h4>
@@ -450,19 +573,27 @@ function App() {
 
                 <hr />
 
-                {catalog.products.map((product, index) => (
-                    <div key={`${product.id ?? "missing-id"}-${index}`}>
+                {catalog.products.length === 0 && <p>Il catalogo non contiene prodotti.</p>}
+                {catalog.products.length > 0 && filteredProducts.length === 0 && (
+                    <p>Nessun prodotto corrisponde ai filtri selezionati.</p>
+                )}
+                {filteredProducts.map(({ product, index }) => (
+                    <div key={isSelectableId(product.id) ? `${product.id}-${index}` : `missing-${product.sku ?? 'id'}-${index}`}>
                             <input
                                 type="checkbox"
-                                checked={selectedIds.includes(product.id)}
+                                checked={isSelectableId(product.id) && selectedIdSet.has(product.id)}
                                 onChange={() => handleToggleProduct(product.id)}
-                                disabled={catalogBusy || typeof product.id !== "string" || !product.id.trim()}
+                                disabled={catalogBusy || !isSelectableId(product.id)}
                                 aria-label={`Seleziona ${product.title ?? "prodotto"}`}
                             />
+                        {!isSelectableId(product.id) && <span>ID non disponibile</span>}
 
                         <p><strong>SKU Vudoo: </strong>{product.sku}</p>
                         <p><strong>Titolo: </strong>{product.title}</p>
                         <p><strong>Produttore: </strong>{product.brand}</p>
+                        {variantDetails(product).map(([label, value]) => (
+                            <p key={label}><strong>{label}: </strong>{value}</p>
+                        ))}
                         <p><strong>Prezzo: </strong>{product.price}</p>
                         <p><strong>Categoria: </strong>{product.category}</p>
                         <p><strong>Codice produttore (MPN): </strong>{product.mpn}</p>

@@ -7,6 +7,7 @@ import {
   loadSettings, readEnvironmentSettings, resetSettings, saveSettings,
 } from "./settingsManager.js";
 import { createWriteGuard } from "./writeGuard.js";
+import { toCatalogProductDto } from "./catalogDto.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -172,15 +173,7 @@ async function bootstrap() {
       const startedAt = Date.now();
       activeCatalog = await fetchParsedVudooCatalog(normalizedCompanyCode);
 
-      const productsForRenderer = activeCatalog.products.map((product) => ({
-        id: product.id,
-        sku: product.sku,
-        title: product.title,
-        brand: product.brand,
-        price: product.price,
-        category: product.product_type,
-        mpn: product.mpn,
-      }));
+      const productsForRenderer = activeCatalog.products.map(toCatalogProductDto);
 
       return {
         channelTitle: activeCatalog.channelTitle,
