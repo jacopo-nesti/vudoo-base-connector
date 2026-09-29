@@ -7,3 +7,4 @@ reports/no_name_products.json
 .DS_Store
 *.vs
 .history/
+renderer/dist/
