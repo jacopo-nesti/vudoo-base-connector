@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { rateLimitGuidance } from './rateLimitGuidance.js';
 
 const numberFields = [
   { key: 'vudooResultsLimit', label: 'Limite risultati Vudoo', min: 1 },
@@ -153,6 +154,7 @@ function SettingsPanel() {
         <p role="alert">Alcuni valori di .env non sono validi: {snapshot.environmentWarnings.join(', ')}. Correggili oppure salva impostazioni valide e riavvia.</p>
       )}
       <p>Richieste Base.com al minuto: <strong>{snapshot.settings.baseApiRequestsPerMinute}</strong></p>
+      <p>{rateLimitGuidance(snapshot.settings.baseApiRequestsPerMinute)}</p>
       <p>Modalità attiva: <strong>{snapshot.activeSettings.dryRun === null
         ? 'Configurazione non valida' : snapshot.activeSettings.dryRun ? 'Simulazione' : 'Reale'}</strong></p>
       {snapshot.restartRequired && <p role="status"><strong>Riavvio necessario per applicare le impostazioni salvate.</strong></p>}
@@ -202,6 +204,7 @@ function SettingsPanel() {
                   <input type="number" min={min} max={max} step="1" value={draft[key]}
                     onChange={event => updateDraft(key, event.target.value)} required />
                 </label>
+                {key === 'baseApiRequestsPerMinute' && <p>{rateLimitGuidance(draft[key])}</p>}
               </div>
             ))}
           </fieldset>

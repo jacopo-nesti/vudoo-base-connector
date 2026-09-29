@@ -1,12 +1,18 @@
 import { token, testMode, dryRun } from './config.js';
 import { log, redactToken } from './logger.js';
-import { sendProductToBase, findProductInBase, getBaseProductDetails, updateProductInBase } from './baseApi.js';
+import {
+  sendProductToBase, findProductInBase, getBaseProductDetails, updateProductInBase,
+  getBaseProductSummaries, getBaseProductsData,
+} from './baseApi.js';
 import { normalizeProduct, buildBasePayload, hasProductChanged, assertVudooSkuCompatibility } from './products.js';
 import { getManufacturerMap, ensureManufacturer } from './manufacturers.js';
 import { getCategoryMap, ensureCategoryPath } from './categories.js';
 import { runPreflightCheck } from './preflight.js';
 
+export const BULK_LOOKUP_THRESHOLD = 50;
+
 export async function runImport(prepared) {
+  const startedAt = Date.now();
   log('[DEBUG] Avvio script');
 
   let config = {};
@@ -49,6 +55,7 @@ export async function runImport(prepared) {
       unmappedValidCategoryProducts: preflightData.categoryAnalysis.unmappedValidCategoryProducts,
       unmappedCategories: preflightData.categoryAnalysis.unmappedCount,
     } : null,
+    durationMs: Math.max(0, Date.now() - startedAt),
   });
   try {
     preflightData = prepared ?? await runPreflightCheck();
@@ -81,6 +88,17 @@ export async function runImport(prepared) {
       ? await getCategoryMap(config.inventory.inventory_id)
       : new Map();
 
+    let productsBySku = null;
+    let detailsById = null;
+    if (selected.length >= BULK_LOOKUP_THRESHOLD) {
+      productsBySku = await getBaseProductSummaries(config.inventory.inventory_id);
+      const matchedIds = selected.flatMap(product => {
+        const summary = productsBySku.get(product.sku ?? product.id);
+        return summary ? [summary.product_id] : [];
+      });
+      detailsById = await getBaseProductsData(config.inventory.inventory_id, matchedIds);
+    }
+
     // Ciclo sui prodotti
     for (const sourceProduct of selected) {
       processed++;
@@ -89,9 +107,19 @@ export async function runImport(prepared) {
         const product = preflightData.normalizedProducts ? { ...sourceProduct } : normalizeProduct(sourceProduct);
         buildBasePayload(product, config);
 
-        const existingProduct = await findProductInBase(product.sku, config.inventory.inventory_id);
+        if (productsBySku?.has(product.sku) && productsBySku.get(product.sku) === null) {
+          throw new Error(`SKU ${product.sku} ambiguo: piu prodotti presenti nel catalogo.`);
+        }
+        let existingProduct = productsBySku
+          ? productsBySku.get(product.sku) ?? null
+          : await findProductInBase(product.sku, config.inventory.inventory_id);
+        // A snapshot can become stale while an import runs. Recheck missing SKUs before CREATE.
+        if (productsBySku && !existingProduct) {
+          existingProduct = await findProductInBase(product.sku, config.inventory.inventory_id);
+        }
         const existingDetails = existingProduct
-          ? await getBaseProductDetails(config.inventory.inventory_id, existingProduct.product_id)
+          ? detailsById?.get(existingProduct.product_id) ??
+            await getBaseProductDetails(config.inventory.inventory_id, existingProduct.product_id)
           : null;
 
         if (existingDetails && existingDetails.sku !== product.sku) {

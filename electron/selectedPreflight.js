@@ -7,6 +7,8 @@ export async function preflightSelectedCatalog(activeCatalog, selectedIds) {
     throw new Error('Seleziona almeno un prodotto prima del preflight.');
   }
 
+  const startedAt = Date.now();
   const prepared = prepareSelectedVudooCatalog(activeCatalog, selectedIds);
-  return toPreflightResult(await preflightPreparedVudooCatalog(prepared));
+  return { ...toPreflightResult(await preflightPreparedVudooCatalog(prepared)),
+    durationMs: Math.max(0, Date.now() - startedAt) };
 }

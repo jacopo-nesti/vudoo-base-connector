@@ -1,7 +1,10 @@
+import { formatDuration } from './importTiming.js';
+
 export function PreflightSummary({ result, title }) {
   return (
     <section>
       <h4>{title}</h4>
+      {result.durationMs != null && <p>Durata controlli: {formatDuration(result.durationMs)}</p>}
       <p>Prodotti analizzati: {result.products.analyzed}</p>
       <p>Prodotti importabili: {result.products.importable}</p>
       <p>Prodotti pronti per Base.com: {result.products.readyForBase}</p>
@@ -21,6 +24,7 @@ export function ImportSummary({ result, dryRunMode }) {
       <h4>{result.ok
         ? (dryRunMode ? 'Simulazione completata' : 'Importazione completata')
         : 'Importazione completata con problemi'}</h4>
+      {result.durationMs != null && <p>Durata importazione: {formatDuration(result.durationMs)}</p>}
       <p>Prodotti letti: {result.read}</p>
       <p>Prodotti selezionati: {result.selected}</p>
       <p>Prodotti elaborati: {result.processed}</p>

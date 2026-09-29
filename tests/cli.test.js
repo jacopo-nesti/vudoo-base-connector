@@ -117,7 +117,7 @@ test('CLI: verifica ambiente senza cataloghi locali', async () => {
     const result = await runProcess(directory, 'cli.js', ['0', '6']);
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /DIAGNOSTICA COMPLETATA CON SUCCESSO/);
-    assert.match(result.output, /Rate limiter Base\.com.*100 richieste\/minuto/);
+    assert.match(result.output, /Rate limiter Base\.com.*95 richieste\/minuto/);
     assert.doesNotMatch(result.output, /real_products\.json|VUDOO\.xml/);
   });
 });

@@ -172,6 +172,7 @@ test('Electron: preflight selettivo usa i record del catalogo attivo e restituis
       assert.equal(preflight.products.analyzed, 2);
       assert.equal(preflight.products.importable, 2);
       assert.equal(preflight.products.readyForBase, 1);
+      assert.ok(preflight.durationMs >= 0);
       assert.equal(preflight.products.feedDuplicates, 1);
       assert.equal(preflight.categories.unmapped, 0);
       assert.deepEqual(JSON.parse(JSON.stringify(preflight)).selection,
@@ -208,6 +209,7 @@ test('Electron: selected import uses the active catalog, preserves duplicates, a
     action: async api => { imported = await api.importSelectedCatalog(parsed, ['SKU-SELECTED']); },
   });
   assert.equal(imported.ok, true);
+  assert.ok(imported.durationMs >= 0);
   assert.deepEqual({ selected: imported.selected, processed: imported.processed,
     created: imported.created, updated: imported.updated, simulated: imported.simulated,
     feedDuplicates: imported.feedDuplicates },
@@ -340,6 +342,7 @@ test('Electron: full preflight uses activeCatalog including No Name and never re
   assert.equal(preflight.products.analyzed, 2);
   assert.equal(preflight.products.missingSourceCategory, 1);
   assert.equal(preflight.products.readyForBase, 1);
+  assert.ok(preflight.durationMs >= 0);
   assert.equal(preflight.categories.mapped, 1);
   assert.equal(preflight.categories.unmapped, 0);
   assert.equal(preflight.selection.selected, 2);
@@ -359,6 +362,7 @@ test('Electron: full import simulates only importable products with no second fe
     action: async api => { imported = await api.importFullCatalog(parsed); },
   });
   assert.equal(imported.ok, true);
+  assert.ok(imported.durationMs >= 0);
   assert.equal(imported.simulated, 1);
   assert.equal(imported.created, 0);
   assert.equal(imported.updated, 0);
@@ -2089,33 +2093,33 @@ test('Log retry e incertezza non espongono il token restituito in un errore', as
 });
 
 
-test('Finestra mobile: prime 80 richieste a piena velocita con configurazione predefinita', async () => {
+test('Finestra mobile: prime 76 richieste a piena velocita con default 95', async () => {
   const result = await sandbox({ entry: '../src/baseApi.js', action: async api => {
-    for (let i = 0; i < 80; i++) await api.callBase('getInventories');
+    for (let i = 0; i < 76; i++) await api.callBase('getInventories');
   } });
-  assert.equal(result.calls.length, 80);
+  assert.equal(result.calls.length, 76);
   assert.ok(result.calls.every(call => call.at === 0));
   assert.deepEqual(result.waits, []);
 });
 
 test('Finestra mobile: rallentamento progressivo dalla soglia soft', async () => {
-  const result = await sandbox({ entry: '../src/baseApi.js', action: async api => {
+  const result = await sandbox({ entry: '../src/baseApi.js', env: { BASE_API_REQUESTS_PER_MINUTE: '100' }, action: async api => {
     for (let i = 0; i < 83; i++) await api.callBase('getInventories');
   } });
   assert.deepEqual(result.waits, [30, 60, 90]);
   assert.deepEqual(result.calls.slice(80).map(call => call.at), [30, 90, 180]);
 });
 
-test('Finestra mobile: limite predefinito 100 rispettato anche con 200 richieste concorrenti', async () => {
+test('Finestra mobile: limite predefinito 95 rispettato anche con 200 richieste concorrenti', async () => {
   const result = await sandbox({ entry: '../src/baseApi.js', action: api =>
     Promise.all(Array.from({ length: 200 }, () => api.callBase('getInventories'))),
   });
   assert.equal(result.calls.length, 200);
-  assert.equal(result.calls[100].at, 60000);
+  assert.equal(result.calls[95].at, 60000);
   for (let index = 0; index < result.calls.length; index++) {
     const now = result.calls[index].at;
     const count = result.calls.slice(0, index + 1).filter(call => call.at > now - 60000).length;
-    assert.ok(count <= 100, `Superata soglia: ${count} a ${now}`);
+    assert.ok(count <= 95, `Superata soglia: ${count} a ${now}`);
   }
 });
 
@@ -2205,7 +2209,7 @@ test('Finestra mobile: backoff reattivo prevale e pulisce i timestamp scaduti', 
   assert.deepEqual(result.waits, [5000]);
 });
 
-for (const [raw, expected] of [[undefined, 100], ['', 100], ['100', 100], ['200', 200], ['500', 500], ['1', 1]]) {
+for (const [raw, expected] of [[undefined, 95], ['', 95], ['100', 100], ['200', 200], ['500', 500], ['1', 1]]) {
   test('Rate limiter: configurazione ' + JSON.stringify(raw) + ' produce ' + expected, async () => {
     const env = raw === undefined ? {} : { BASE_API_REQUESTS_PER_MINUTE: raw };
     const result = await sandbox({ entry: '../src/config.js', env,
@@ -2224,6 +2228,190 @@ for (const raw of ['abc', '0', '-1']) {
     assert.equal(result.calls.length, 0);
   });
 }
+
+test('Bulk Base: pagina 1000 prodotti, include varianti e segnala SKU ambigui', async () => {
+  const firstPage = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => {
+    const id = index + 1;
+    return [id, { id, sku: `SKU-${id}`, parent_id: id === 1 ? 9 : 0 }];
+  }));
+  firstPage[1000].sku = 'DUPLICATO';
+  const secondPage = { 1001: { id: 1001, sku: 'DUPLICATO' }, 1002: { id: 1002, sku: '' } };
+  const response = (method, parameters) => method === 'getInventoryProductsList'
+    ? { ok: true, json: async () => ({ status: 'SUCCESS', products: parameters.page === 1 ? firstPage : secondPage }) }
+    : undefined;
+  const result = await sandbox({ entry: '../src/baseApi.js', response, action: async api => {
+    const map = await api.getBaseProductSummaries(10);
+    assert.equal(map.size, 1000);
+    assert.equal(map.get('SKU-1').product_id, 1);
+    assert.equal(map.get('SKU-1').parent_id, 9);
+    assert.equal(map.get('DUPLICATO'), null);
+    assert.equal(map.has(''), false);
+  } });
+  const pages = result.calls.filter(call => call.method === 'getInventoryProductsList');
+  assert.deepEqual(pages.map(call => call.parameters.page), [1, 2]);
+  assert.ok(pages.every(call => call.parameters.include_variants === true && !('filter_sku' in call.parameters)));
+  assert.ok(pages.every(call => call.parameters.filter_sort === 'id ASC'));
+});
+
+test('Bulk Base: ID invalidi e risposta dettagli incompleta sono errori espliciti', async () => {
+  const invalid = await sandbox({ entry: '../src/baseApi.js', response: method =>
+    method === 'getInventoryProductsList' ? { ok: true, json: async () => ({ status: 'SUCCESS', products: { 1: { id: 2, sku: 'A' } } }) } : undefined,
+    action: async api => assert.rejects(api.getBaseProductSummaries(10), /Identita prodotto/),
+  });
+  assert.equal(invalid.calls.length, 1);
+  const missing = await sandbox({ entry: '../src/baseApi.js', response: method =>
+    method === 'getInventoryProductsData' ? { ok: true, json: async () => ({ status: 'SUCCESS', products: {} }) } : undefined,
+    action: async api => assert.rejects(api.getBaseProductsData(10, [1]), /Dettagli del prodotto 1 mancanti/),
+  });
+  assert.equal(missing.calls.length, 1);
+});
+
+test('Bulk Base: 333 dettagli sono associati agli ID con quattro letture da massimo 100', async () => {
+  const response = (method, parameters) => method === 'getInventoryProductsData'
+    ? { ok: true, json: async () => ({ status: 'SUCCESS', products: Object.fromEntries(
+      parameters.products.map(id => [id, { sku: `SKU-${id}` }])) }) }
+    : undefined;
+  const result = await sandbox({ entry: '../src/baseApi.js', response, action: async api => {
+    const ids = Array.from({ length: 333 }, (_, index) => index + 1);
+    const map = await api.getBaseProductsData(10, ids);
+    assert.equal(map.size, 333);
+    assert.equal(map.get(1).sku, 'SKU-1');
+    assert.equal(map.get(333).sku, 'SKU-333');
+    assert.equal(api.BASE_PRODUCT_DETAILS_CHUNK_SIZE, 100);
+  } });
+  assert.deepEqual(result.calls.map(call => call.parameters.products.length), [100, 100, 100, 33]);
+});
+
+test('Bulk import: CREATE, UPDATE e SKIP usano dettagli batch e ricontrollano solo SKU mancanti', async () => {
+  const products = Array.from({ length: 50 }, (_, index) =>
+    normalizeProduct({ ...source, id: `BULK-${index + 1}` }));
+  const response = (method, parameters) => {
+    if (method === 'getInventoryProductsList') {
+      const products = parameters.filter_sku ? {} : Object.fromEntries(
+        Array.from({ length: 49 }, (_, index) => {
+          const id = index + 1;
+          return [id, { id, sku: `BULK-${id}` }];
+        }));
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products }) };
+    }
+    if (method === 'getInventoryProductsData') {
+      const products = Object.fromEntries(parameters.products.map(id =>
+        [id, { ...details, sku: `BULK-${id}`, prices: { 20: id === 49 ? 24 : 25 } }]));
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products }) };
+    }
+    return undefined;
+  };
+  let imported;
+  const result = await sandbox({ entry: '../src/importer.js', response,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => {
+      imported = await api.runImport({
+        inventory: { inventory_id: 10 }, priceGroup: { price_group_id: 20, currency: 'EUR' },
+        warehouse: { id: 'bl_30' }, products, selectedProducts: products,
+        normalizedProducts: true, feedDuplicates: 0,
+      });
+    },
+  });
+  assert.deepEqual({ created: imported.created, updated: imported.updated, unchanged: imported.unchanged,
+    errors: imported.errors }, { created: 1, updated: 1, unchanged: 48, errors: 0 });
+  assert.equal(imported.ok, true);
+  assert.ok(imported.durationMs >= 0);
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryProductsList').length, 2);
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryProductsData').length, 1);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 2);
+});
+
+test('Bulk import: DRY_RUN confronta i prodotti precaricati senza scritture Base', async () => {
+  const products = Array.from({ length: 50 }, (_, index) =>
+    normalizeProduct({ ...source, id: `DRY-${index + 1}` }));
+  const response = (method, parameters) => {
+    if (method === 'getInventoryProductsList') {
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products: Object.fromEntries(
+        products.map((product, index) => [index + 1, { id: index + 1, sku: product.sku }])) }) };
+    }
+    if (method === 'getInventoryProductsData') {
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products: Object.fromEntries(
+        parameters.products.map(id => [id, { ...details, sku: `DRY-${id}`, prices: { 20: 24 } }])) }) };
+    }
+    return undefined;
+  };
+  let imported;
+  const result = await sandbox({ entry: '../src/importer.js', response,
+    env: { DRY_RUN: 'true', TEST_MODE: 'false' },
+    action: async api => { imported = await api.runImport({
+      inventory: { inventory_id: 10 }, priceGroup: { price_group_id: 20, currency: 'EUR' },
+      warehouse: { id: 'bl_30' }, products, selectedProducts: products,
+      normalizedProducts: true, feedDuplicates: 0,
+    }); },
+  });
+  assert.equal(imported.simulated, 50);
+  assert.equal(imported.created + imported.updated, 0);
+  assert.equal(imported.errors, 0);
+  assert.deepEqual(result.calls.filter(call => call.method.startsWith('getInventoryProducts'))
+    .map(call => call.method), ['getInventoryProductsList', 'getInventoryProductsData']);
+  assert.ok(result.calls.every(call => call.method.startsWith('get')));
+});
+
+test('Bulk import: 333 prodotti Base esistenti richiedono una lista e quattro batch dettagli', async () => {
+  const products = Array.from({ length: 333 }, (_, index) =>
+    normalizeProduct({ ...source, id: `CAT-${index + 1}` }));
+  const response = (method, parameters) => {
+    if (method === 'getInventoryProductsList') {
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products: Object.fromEntries(
+        products.map((product, index) => [index + 1, { id: index + 1, sku: product.sku }])) }) };
+    }
+    if (method === 'getInventoryProductsData') {
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products: Object.fromEntries(
+        parameters.products.map(id => [id, { ...details, sku: `CAT-${id}` }])) }) };
+    }
+    return undefined;
+  };
+  let imported;
+  const result = await sandbox({ entry: '../src/importer.js', response,
+    env: { DRY_RUN: 'true', TEST_MODE: 'false' },
+    action: async api => { imported = await api.runImport({
+      inventory: { inventory_id: 10 }, priceGroup: { price_group_id: 20, currency: 'EUR' },
+      warehouse: { id: 'bl_30' }, products, selectedProducts: products,
+      normalizedProducts: true, feedDuplicates: 0,
+    }); },
+  });
+  assert.equal(imported.unchanged, 333);
+  assert.equal(imported.errors, 0);
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryProductsList').length, 1);
+  assert.deepEqual(result.calls.filter(call => call.method === 'getInventoryProductsData')
+    .map(call => call.parameters.products.length), [100, 100, 100, 33]);
+});
+
+test('Bulk import: SKU ambiguo resta un errore e non sceglie un prodotto arbitrario', async () => {
+  const products = Array.from({ length: 50 }, (_, index) =>
+    normalizeProduct({ ...source, id: `AMB-${index + 1}` }));
+  const response = (method, parameters) => {
+    if (method === 'getInventoryProductsList') {
+      const matches = Object.fromEntries(products.map((product, index) =>
+        [index + 1, { id: index + 1, sku: product.sku }]));
+      matches[51] = { id: 51, sku: 'AMB-1' };
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products: matches }) };
+    }
+    if (method === 'getInventoryProductsData') {
+      return { ok: true, json: async () => ({ status: 'SUCCESS', products: Object.fromEntries(
+        parameters.products.map(id => [id, { ...details, sku: `AMB-${id}` }])) }) };
+    }
+    return undefined;
+  };
+  let imported;
+  const result = await sandbox({ entry: '../src/importer.js', response,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => { imported = await api.runImport({
+      inventory: { inventory_id: 10 }, priceGroup: { price_group_id: 20, currency: 'EUR' },
+      warehouse: { id: 'bl_30' }, products, selectedProducts: products,
+      normalizedProducts: true, feedDuplicates: 0,
+    }); },
+  });
+  assert.equal(imported.errors, 1);
+  assert.deepEqual(Array.from(imported.errorSkus), ['AMB-1']);
+  assert.equal(imported.unchanged, 49);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryProduct'), false);
+});
 
 test('Rate limiter: il limite configurato 200 viene applicato realmente', async () => {
   const result = await sandbox({ entry: '../src/baseApi.js', env: { BASE_API_REQUESTS_PER_MINUTE: '200' },

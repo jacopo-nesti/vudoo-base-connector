@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   unmappedCategoryPolicy: 'block',
   vudooResultsLimit: 3000,
   vudooTimeoutMs: 90000,
-  baseApiRequestsPerMinute: 100,
+  baseApiRequestsPerMinute: 95,
   baseApiReadAttempts: 3,
   baseApiRetryDelayMs: 1000,
   baseApiRateLimitDelayMs: 60000,

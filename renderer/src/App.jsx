@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import SettingsPanel from "./SettingsPanel.jsx";
 import { PreflightSummary, ImportSummary } from "./CatalogResults.jsx";
+import { estimateImportDurationMs, formatDuration } from "./importTiming.js";
 
 const environmentLabels = {
     BASE_API_TOKEN: "Credenziali Base.com",
@@ -22,6 +23,8 @@ function App() {
     const [loading, setLoading] = useState(false);
     const [dryRunMode, setDryRunMode] = useState(undefined);
     const [testModeEnabled, setTestModeEnabled] = useState(undefined);
+    const [baseApiRequestsPerMinute, setBaseApiRequestsPerMinute] = useState(null);
+    const [importReadStrategy, setImportReadStrategy] = useState(null);
     const [runtimeModeError, setRuntimeModeError] = useState("");
 
     // Vudoo catalog
@@ -62,6 +65,9 @@ function App() {
                 if (active) {
                     setDryRunMode(typeof mode?.dryRun === "boolean" ? mode.dryRun : null);
                     setTestModeEnabled(typeof mode?.testMode === "boolean" ? mode.testMode : null);
+                    setBaseApiRequestsPerMinute(Number.isSafeInteger(mode?.baseApiRequestsPerMinute)
+                        ? mode.baseApiRequestsPerMinute : null);
+                    setImportReadStrategy(mode?.importReadStrategy ?? null);
                 }
             })
             .catch(() => {
@@ -364,6 +370,7 @@ function App() {
                 <p>
                     <strong>Prodotti ricevuti:</strong> {catalog.totalProducts}
                 </p>
+                {catalog.durationMs != null && <p>Catalogo caricato in {formatDuration(catalog.durationMs)}.</p>}
 
                 <p>Prodotti selezionati: {selectedIds.length}</p>
 
@@ -376,6 +383,11 @@ function App() {
                     {fullPreflightResult && (
                         <>
                             <PreflightSummary result={fullPreflightResult} title="Controlli preliminari completati" />
+                            {estimateImportDurationMs(fullPreflightResult.products.readyForBase, baseApiRequestsPerMinute, { dryRun: dryRunMode, ...importReadStrategy }) != null && (
+                                <p>Stima indicativa dal ritmo delle richieste Base.com: circa {formatDuration(
+                                    estimateImportDurationMs(fullPreflightResult.products.readyForBase, baseApiRequestsPerMinute, { dryRun: dryRunMode, ...importReadStrategy })
+                                )} {dryRunMode ? 'senza scritture' : 'se tutti i prodotti richiedono una scrittura'}. La durata reale dipende anche dalle pagine Base, dagli SKU nuovi e dai tempi di risposta.</p>
+                            )}
                             {fullPreflightResult.products.readyForBase > 0 ? (
                                 <button onClick={handleImportFull} disabled={catalogBusy || typeof dryRunMode !== "boolean"}>
                                     Importa / aggiorna catalogo completo
@@ -414,6 +426,11 @@ function App() {
                 {preflightResult && (
                     <section>
                         <PreflightSummary result={preflightResult} title="Controlli preliminari completati" />
+                        {estimateImportDurationMs(preflightResult.products.readyForBase, baseApiRequestsPerMinute, { dryRun: dryRunMode, ...importReadStrategy }) != null && (
+                            <p>Stima indicativa dal ritmo delle richieste Base.com: circa {formatDuration(
+                                estimateImportDurationMs(preflightResult.products.readyForBase, baseApiRequestsPerMinute, { dryRun: dryRunMode, ...importReadStrategy })
+                            )} {dryRunMode ? 'senza scritture' : 'se tutti i prodotti richiedono una scrittura'}. La durata reale può variare.</p>
+                        )}
                         {preflightResult.products.readyForBase > 0 ? (
                             <button
                                 onClick={handleImportSelected}

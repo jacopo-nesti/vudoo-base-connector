@@ -10,13 +10,17 @@ function requireCatalog(activeCatalog) {
 }
 
 export async function preflightFullCatalog(activeCatalog) {
+  const startedAt = Date.now();
   const prepared = prepareFullVudooCatalog(requireCatalog(activeCatalog));
-  return toPreflightResult(await preflightPreparedVudooCatalog(prepared));
+  return { ...toPreflightResult(await preflightPreparedVudooCatalog(prepared)),
+    durationMs: Math.max(0, Date.now() - startedAt) };
 }
 
 export async function importFullCatalog(activeCatalog) {
+  const startedAt = Date.now();
   const prepared = prepareFullVudooCatalog(requireCatalog(activeCatalog));
-  return toImportResult(await importPreparedVudooCatalog(prepared));
+  return { ...toImportResult(await importPreparedVudooCatalog(prepared)),
+    durationMs: Math.max(0, Date.now() - startedAt) };
 }
 
 export async function syncFullCatalogManufacturers(activeCatalog) {

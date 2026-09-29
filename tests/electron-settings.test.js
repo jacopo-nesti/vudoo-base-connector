@@ -156,6 +156,10 @@ test('Electron settings: reset removes overrides and restores original .env-deri
   });
 });
 
+test('Electron settings: default Base API rate is 95 without an environment override', () => {
+  assert.equal(readEnvironmentSettings({}).settings.baseApiRequestsPerMinute, 95);
+});
+
 test('Electron settings: corrupt, invalid, and unknown file data fall back without crashing', async () => {
   await withSettingsFile(async filePath => {
     for (const contents of ['{broken', '{"dryRun":"false"}', '{"BASE_API_TOKEN":"secret"}']) {

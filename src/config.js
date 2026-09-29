@@ -43,7 +43,7 @@ export function getVudooTimeoutConfig(raw = process.env.VUDOO_TIMEOUT_MS) {
 
 export function getBaseApiRequestsPerMinute() {
   const raw = process.env.BASE_API_REQUESTS_PER_MINUTE;
-  if (raw == null || raw.trim() === '') return 100;
+  if (raw == null || raw.trim() === '') return 95;
   const value = Number(raw);
   if (!/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(value) || value <= 0) {
     throw new Error('BASE_API_REQUESTS_PER_MINUTE deve essere un intero maggiore di zero.');

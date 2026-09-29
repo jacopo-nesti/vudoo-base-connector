@@ -44,7 +44,10 @@ async function bootstrap() {
   const { fetchParsedVudooCatalog } =
     await import("../src/vudooImport.js");
 
-  const { dryRun, testMode } =
+  const { BULK_LOOKUP_THRESHOLD } = await import("../src/importer.js");
+  const { BASE_PRODUCT_DETAILS_CHUNK_SIZE } = await import("../src/baseApi.js");
+
+  const { dryRun, testMode, getBaseApiRequestsPerMinute } =
     await import("../src/config.js");
 
   const { redactToken } =
@@ -149,6 +152,11 @@ async function bootstrap() {
     ipcMain.handle("app:runtime-mode", () => ({
       dryRun: dryRun === "true" ? true : dryRun === "false" ? false : null,
       testMode: testMode === "true" ? true : testMode === "false" ? false : null,
+      baseApiRequestsPerMinute: getBaseApiRequestsPerMinute(),
+      importReadStrategy: {
+        bulkLookupThreshold: BULK_LOOKUP_THRESHOLD,
+        detailsChunkSize: BASE_PRODUCT_DETAILS_CHUNK_SIZE,
+      },
     }));
     ipcMain.handle("app:ping", () => {
       return "pong";
@@ -161,6 +169,7 @@ async function bootstrap() {
 
       const normalizedCompanyCode = companyCode.trim();
       activeCatalog = null;
+      const startedAt = Date.now();
       activeCatalog = await fetchParsedVudooCatalog(normalizedCompanyCode);
 
       const productsForRenderer = activeCatalog.products.map((product) => ({
@@ -176,6 +185,7 @@ async function bootstrap() {
       return {
         channelTitle: activeCatalog.channelTitle,
         totalProducts: activeCatalog.products.length,
+        durationMs: Math.max(0, Date.now() - startedAt),
         products: productsForRenderer,
       };
     });

@@ -7,6 +7,8 @@ export async function importSelectedCatalog(activeCatalog, selectedIds) {
     throw new Error('Seleziona almeno un prodotto prima dell’importazione.');
   }
 
+  const startedAt = Date.now();
   const prepared = prepareSelectedVudooCatalog(activeCatalog, selectedIds);
-  return toImportResult(await importPreparedVudooCatalog(prepared));
+  return { ...toImportResult(await importPreparedVudooCatalog(prepared)),
+    durationMs: Math.max(0, Date.now() - startedAt) };
 }

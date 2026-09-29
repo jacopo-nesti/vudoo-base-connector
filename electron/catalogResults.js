@@ -61,5 +61,6 @@ export function toImportResult(result) {
     uncertainSkus: result.uncertainSkus,
     eanWarningsCount: result.eanWarningsCount,
     categorySummary: result.categorySummary,
+    durationMs: result.durationMs,
   };
 }
