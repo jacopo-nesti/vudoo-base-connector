@@ -6,6 +6,7 @@ import {
   SETTINGS_FILE_NAME, applySettingsToEnvironment, getEffectiveSettings,
   loadSettings, readEnvironmentSettings, resetSettings, saveSettings,
 } from "./settingsManager.js";
+import { createWriteGuard } from "./writeGuard.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,7 +44,7 @@ async function bootstrap() {
   const { fetchParsedVudooCatalog } =
     await import("../src/vudooImport.js");
 
-  const { dryRun } =
+  const { dryRun, testMode } =
     await import("../src/config.js");
 
   const { redactToken } =
@@ -55,8 +56,19 @@ async function bootstrap() {
   const { importSelectedCatalog } =
     await import("./selectedImport.js");
 
+  const { preflightFullCatalog, importFullCatalog, syncFullCatalogManufacturers } =
+    await import("./fullCatalog.js");
+
   let activeCatalog = null;
-  let importInProgress = false;
+  const writeGuard = createWriteGuard();
+
+  async function runWriteOperation(operation) {
+    try {
+      return { ok: true, result: await writeGuard.run(operation) };
+    } catch (error) {
+      return { ok: false, error: redactToken(error?.message ?? error) };
+    }
+  }
 
   function settingsResponse() {
     const settings = getEffectiveSettings(baseSettings, savedSettings);
@@ -122,7 +134,7 @@ async function bootstrap() {
       }
     });
     ipcMain.handle("app:restart", () => {
-      if (importInProgress) return { ok: false, code: 'importInProgress' };
+      if (writeGuard.isBusy()) return { ok: false, code: 'importInProgress' };
       if (!settingsResponse().restartRequired) return { ok: false, code: 'restartNotRequired' };
       setImmediate(() => {
         app.relaunch();
@@ -136,11 +148,13 @@ async function bootstrap() {
     });
     ipcMain.handle("app:runtime-mode", () => ({
       dryRun: dryRun === "true" ? true : dryRun === "false" ? false : null,
+      testMode: testMode === "true" ? true : testMode === "false" ? false : null,
     }));
     ipcMain.handle("app:ping", () => {
       return "pong";
     });
     ipcMain.handle("catalog:fetch", async (_event, companyCode) => {
+      if (writeGuard.isBusy()) throw new Error("Attendi la fine dell’importazione o sincronizzazione.");
       if (typeof companyCode !== "string" || !companyCode.trim()) {
         throw new Error("Codice azienda non valido");
       }
@@ -175,18 +189,22 @@ async function bootstrap() {
     });
 
     ipcMain.handle("catalog:import-selected", async (_event, selectedIds) => {
-      if (importInProgress) {
-        return { ok: false, error: "Un’importazione è già in corso." };
-      }
-      importInProgress = true;
+      return runWriteOperation(() => importSelectedCatalog(activeCatalog, selectedIds));
+    });
+
+    ipcMain.handle("catalog:preflight-all", async () => {
       try {
-        return { ok: true, result: await importSelectedCatalog(activeCatalog, selectedIds) };
+        return { ok: true, result: await preflightFullCatalog(activeCatalog) };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
-      } finally {
-        importInProgress = false;
       }
     });
+
+    ipcMain.handle("catalog:import-all", async () =>
+      runWriteOperation(() => importFullCatalog(activeCatalog)));
+
+    ipcMain.handle("catalog:sync-manufacturers", async () =>
+      runWriteOperation(() => syncFullCatalogManufacturers(activeCatalog)));
 
     createWindow();
   }

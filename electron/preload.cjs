@@ -14,4 +14,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("catalog:preflight-selected", selectedIds),
   importSelected: (selectedIds) =>
     ipcRenderer.invoke("catalog:import-selected", selectedIds),
+  preflightFullCatalog: () => ipcRenderer.invoke("catalog:preflight-all"),
+  importFullCatalog: () => ipcRenderer.invoke("catalog:import-all"),
+  syncManufacturers: () => ipcRenderer.invoke("catalog:sync-manufacturers"),
 });

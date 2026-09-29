@@ -304,6 +304,123 @@ test('Electron: preload exposes only specific IPC methods for selected preflight
   assert.equal('invoke' in exposed, false);
 });
 
+test('Core: full catalog preparation keeps No Name without g:id and all source records', async () => {
+  const mapped = categorizedItem('SKU-FULL', 'Categoria A');
+  const noName = categorizedItem('SKU-NO-NAME', 'No name > No name')
+    .replace('<g:id>SKU-NO-NAME</g:id>', '');
+  const parsed = parseCatalog(catalogXml(mapped + mapped + noName));
+  const result = await sandbox({ entry: '../src/vudooImport.js', action: async api => {
+    const prepared = api.prepareFullVudooCatalog(parsed);
+    assert.equal(prepared.sources.length, 3);
+    assert.equal(prepared.sources[2], parsed.products[2]);
+    assert.equal(prepared.products.length, 3);
+    assert.equal(prepared.uniqueProducts.length, 1);
+    assert.equal(prepared.selection.selected, 2);
+  } });
+  assert.deepEqual(result.calls, []);
+});
+
+test('Electron: full operations reject a missing active catalog before Base or Vudoo', async () => {
+  const result = await sandbox({ entry: '../electron/fullCatalog.js', action: async api => {
+    await assert.rejects(api.preflightFullCatalog(null), /Carica prima un catalogo/);
+    await assert.rejects(api.importFullCatalog(null), /Carica prima un catalogo/);
+    await assert.rejects(api.syncFullCatalogManufacturers(null), /Carica prima un catalogo/);
+  } });
+  assert.deepEqual(result.calls, []);
+});
+
+test('Electron: full preflight uses activeCatalog including No Name and never refetches', async () => {
+  const noName = categorizedItem('SKU-NO-NAME', 'No name > No name')
+    .replace('<g:id>SKU-NO-NAME</g:id>', '');
+  const parsed = parseCatalog(catalogXml(categorizedItem('SKU-READY', 'Categoria A') + noName));
+  let preflight;
+  const result = await sandbox({ entry: '../electron/fullCatalog.js', categoryMappings: partialCategoryMappings,
+    action: async api => { preflight = await api.preflightFullCatalog(parsed); },
+  });
+  assert.equal(preflight.products.analyzed, 2);
+  assert.equal(preflight.products.missingSourceCategory, 1);
+  assert.equal(preflight.products.readyForBase, 1);
+  assert.equal(preflight.categories.mapped, 1);
+  assert.equal(preflight.categories.unmapped, 0);
+  assert.equal(preflight.selection.selected, 2);
+  assert.equal(result.calls.some(call => call.method === 'VUDOO_GET'), false);
+  assert.equal(result.calls.every(call => call.method.startsWith('get')), true);
+  assert.doesNotMatch(JSON.stringify(preflight), /test-only-token/);
+  assert.equal('selectedProducts' in preflight, false);
+});
+
+test('Electron: full import simulates only importable products with no second fetch', async () => {
+  const noName = categorizedItem('SKU-NO-NAME', 'No name > No name')
+    .replace('<g:id>SKU-NO-NAME</g:id>', '');
+  const parsed = parseCatalog(catalogXml(categorizedItem('SKU-READY', 'Categoria A') + noName));
+  let imported;
+  const result = await sandbox({ entry: '../electron/fullCatalog.js', categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'true', TEST_MODE: 'false' },
+    action: async api => { imported = await api.importFullCatalog(parsed); },
+  });
+  assert.equal(imported.ok, true);
+  assert.equal(imported.simulated, 1);
+  assert.equal(imported.created, 0);
+  assert.equal(imported.updated, 0);
+  assert.equal(imported.categorySummary.totalFeedProducts, 2);
+  assert.equal(imported.categorySummary.missingSourceCategoryProducts, 1);
+  assert.equal(result.calls.some(call => call.method === 'VUDOO_GET'), false);
+  assert.equal(result.calls.some(call => !call.method.startsWith('get')), false);
+  assert.equal(result.exitCode, 0);
+});
+
+test('Electron: full import can create through the existing core in mocked real mode', async () => {
+  const parsed = parseCatalog(catalogXml(categorizedItem('SKU-REAL-FULL', 'Categoria A')));
+  let imported;
+  const result = await sandbox({ entry: '../electron/fullCatalog.js', categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => { imported = await api.importFullCatalog(parsed); },
+  });
+  assert.equal(imported.ok, true);
+  assert.equal(imported.created, 1);
+  assert.equal(imported.simulated, 0);
+  assert.deepEqual(Array.from(imported.errorSkus), []);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
+  assert.equal(result.calls.some(call => call.method === 'VUDOO_GET'), false);
+});
+
+test('Electron: manufacturer sync uses activeCatalog, preserves all brands and DRY_RUN', async () => {
+  const parsed = parseCatalog(catalogXml(
+    categorizedItem('SKU-UNKNOWN', 'Categoria non configurata', 'Brand Non Presente') +
+    categorizedItem('SKU-NO-NAME', 'No name > No name', 'Brand Senza Categoria')));
+  let synced;
+  const result = await sandbox({ entry: '../electron/fullCatalog.js', categoryMappings: partialCategoryMappings,
+    env: { DRY_RUN: 'true' },
+    action: async api => { synced = await api.syncFullCatalogManufacturers(parsed); },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(synced)), { ok: true });
+  assert.deepEqual(result.calls.map(call => call.method), ['getInventoryManufacturers']);
+  assert.ok(result.logs.some(line => line.includes('[DRY_RUN] Produttore da creare: Brand Non Presente')));
+  assert.ok(result.logs.some(line => line.includes('[DRY_RUN] Produttore da creare: Brand Senza Categoria')));
+});
+
+test('Electron: preload exposes specific full-catalog channels without a generic IPC method', async () => {
+  const invocations = [];
+  let exposed;
+  vm.runInNewContext(fs.readFileSync(new URL('../electron/preload.cjs', import.meta.url), 'utf8'), {
+    require: specifier => {
+      assert.equal(specifier, 'electron');
+      return {
+        contextBridge: { exposeInMainWorld: (_name, api) => { exposed = api; } },
+        ipcRenderer: { invoke: (...args) => { invocations.push(args); return Promise.resolve({ ok: true }); } },
+      };
+    },
+  });
+  await exposed.preflightFullCatalog();
+  await exposed.importFullCatalog();
+  await exposed.syncManufacturers();
+  assert.deepEqual(invocations, [
+    ['catalog:preflight-all'], ['catalog:import-all'], ['catalog:sync-manufacturers'],
+  ]);
+  assert.equal('ipcRenderer' in exposed, false);
+  assert.equal('invoke' in exposed, false);
+});
+
 test('Core: runImport restituisce contatori DRY_RUN senza modificare process.exitCode', async () => {
   let imported;
   const result = await sandbox({ entry: '../src/importer.js', action: async api => {

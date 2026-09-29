@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import SettingsPanel from "./SettingsPanel.jsx";
+import { PreflightSummary, ImportSummary } from "./CatalogResults.jsx";
 
 const environmentLabels = {
     BASE_API_TOKEN: "Credenziali Base.com",
@@ -20,6 +21,7 @@ function App() {
     const [environment, setEnvironment] = useState(null);
     const [loading, setLoading] = useState(false);
     const [dryRunMode, setDryRunMode] = useState(undefined);
+    const [testModeEnabled, setTestModeEnabled] = useState(undefined);
     const [runtimeModeError, setRuntimeModeError] = useState("");
 
     // Vudoo catalog
@@ -36,7 +38,18 @@ function App() {
     const [importResult, setImportResult] = useState(null);
     const [importLoading, setImportLoading] = useState(false);
     const [importError, setImportError] = useState("");
+    const [fullPreflightResult, setFullPreflightResult] = useState(null);
+    const [fullPreflightLoading, setFullPreflightLoading] = useState(false);
+    const [fullPreflightError, setFullPreflightError] = useState("");
+    const [fullImportResult, setFullImportResult] = useState(null);
+    const [fullImportLoading, setFullImportLoading] = useState(false);
+    const [fullImportError, setFullImportError] = useState("");
+    const [manufacturerSyncResult, setManufacturerSyncResult] = useState(null);
+    const [manufacturerSyncLoading, setManufacturerSyncLoading] = useState(false);
+    const [manufacturerSyncError, setManufacturerSyncError] = useState("");
     const [showSettings, setShowSettings] = useState(false);
+    const catalogBusy = catalogLoading || preflightLoading || importLoading ||
+        fullPreflightLoading || fullImportLoading || manufacturerSyncLoading;
 
     useEffect(() => {
         if (!window.electronAPI?.getRuntimeMode) {
@@ -46,7 +59,10 @@ function App() {
         let active = true;
         window.electronAPI.getRuntimeMode()
             .then((mode) => {
-                if (active) setDryRunMode(typeof mode?.dryRun === "boolean" ? mode.dryRun : null);
+                if (active) {
+                    setDryRunMode(typeof mode?.dryRun === "boolean" ? mode.dryRun : null);
+                    setTestModeEnabled(typeof mode?.testMode === "boolean" ? mode.testMode : null);
+                }
             })
             .catch(() => {
                 if (active) setRuntimeModeError("Impossibile verificare la modalità di importazione.");
@@ -79,6 +95,12 @@ function App() {
         setPreflightError("")
         setImportResult(null)
         setImportError("")
+        setFullPreflightResult(null)
+        setFullPreflightError("")
+        setFullImportResult(null)
+        setFullImportError("")
+        setManufacturerSyncResult(null)
+        setManufacturerSyncError("")
 
         try {
             const result = await window.electronAPI.fetchCatalog(companyCode)
@@ -141,6 +163,7 @@ function App() {
         setImportResult(null);
         setImportError("");
         setPreflightResult(null);
+        setFullPreflightResult(null);
 
         try {
             const response = await window.electronAPI.importSelected(selectedIds);
@@ -160,12 +183,98 @@ function App() {
         }
     }
 
+    async function handlePreflightFull() {
+        setFullPreflightLoading(true);
+        setFullPreflightResult(null);
+        setFullPreflightError("");
+        setFullImportResult(null);
+        setFullImportError("");
+        try {
+            const response = await window.electronAPI.preflightFullCatalog();
+            if (!response?.ok || !response.result) {
+                throw new Error(response?.error || "Risposta non valida durante i controlli preliminari.");
+            }
+            setFullPreflightResult(response.result);
+        } catch (error) {
+            setFullPreflightError(error?.message ?? "Controlli preliminari non riusciti.");
+        } finally {
+            setFullPreflightLoading(false);
+        }
+    }
+
+    async function handleImportFull() {
+        if (!catalog || !fullPreflightResult || typeof dryRunMode !== "boolean") return;
+        const modeDescription = dryRunMode
+            ? "Modalità simulazione attiva: nessuna modifica verrà scritta su Base.com."
+            : "ATTENZIONE: modalità reale. L'operazione può modificare Base.com.";
+        const confirmed = window.confirm(
+            `Catalogo caricato: ${catalog.totalProducts} prodotti.\n` +
+            `Prodotti pronti dopo i controlli: ${fullPreflightResult.products.readyForBase}.\n` +
+            (testModeEnabled ? "Modalità test attiva: l'import dei prodotti è limitato dal backend.\n" : "") +
+            `${modeDescription}\nVuoi avviare l'importazione completa?`
+        );
+        if (!confirmed) return;
+
+        setFullImportLoading(true);
+        setFullImportResult(null);
+        setFullImportError("");
+        setFullPreflightResult(null);
+        setPreflightResult(null);
+        try {
+            const response = await window.electronAPI.importFullCatalog();
+            if (!response?.ok || !response.result) {
+                throw new Error(response?.error || "Risposta non valida dal processo principale.");
+            }
+            setFullImportResult(response.result);
+            if (!response.result.ok) {
+                setFullImportError(response.result.preflightError
+                    ? `Controlli preliminari non superati: ${response.result.preflightError}`
+                    : "Importazione terminata con errori o operazioni da verificare. Consulta il riepilogo.");
+            }
+        } catch (error) {
+            setFullImportError(`Impossibile completare l'importazione: ${error?.message ?? String(error)}`);
+        } finally {
+            setFullImportLoading(false);
+        }
+    }
+
+    async function handleManufacturerSync() {
+        if (!catalog || typeof dryRunMode !== "boolean") return;
+        const modeDescription = dryRunMode
+            ? "Modalità simulazione: nessuna modifica verrà scritta su Base.com."
+            : "ATTENZIONE: modalità reale. La sincronizzazione può creare produttori su Base.com.";
+        if (!window.confirm(`Sincronizzare i produttori del catalogo caricato?\n${modeDescription}`)) return;
+
+        setManufacturerSyncLoading(true);
+        setManufacturerSyncResult(null);
+        setManufacturerSyncError("");
+        setFullPreflightResult(null);
+        setPreflightResult(null);
+        try {
+            const response = await window.electronAPI.syncManufacturers();
+            if (!response?.ok || !response.result?.ok) {
+                throw new Error(response?.error || "Sincronizzazione non riuscita.");
+            }
+            setManufacturerSyncResult(response.result);
+        } catch (error) {
+            setManufacturerSyncError(`Impossibile sincronizzare i produttori: ${error?.message ?? String(error)}`);
+        } finally {
+            setManufacturerSyncLoading(false);
+        }
+    }
+
   return (
     <main>
         <h1>Vudoo Base Connector</h1>
 
         {dryRunMode === true && (
             <p><strong>Modalità simulazione attiva: nessuna modifica verrà scritta su Base.com.</strong></p>
+        )}
+        {testModeEnabled === true && (
+            <p><strong>Modalità test attiva: gli import di prodotti sono limitati dal backend.</strong></p>
+        )}
+        {testModeEnabled === null && (
+            <p role="alert">Configurazione della modalità test non valida. Controlla TEST_MODE nelle impostazioni e riavvia l'applicazione.</p>
         )}
         {dryRunMode === false && (
             <p role="alert"><strong>ATTENZIONE: modalità reale attiva. L'importazione può modificare Base.com.</strong></p>
@@ -179,7 +288,7 @@ function App() {
         <hr />
 
         <h2>Impostazioni</h2>
-        <button type="button" onClick={() => setShowSettings(current => !current)} disabled={importLoading}>
+        <button type="button" onClick={() => setShowSettings(current => !current)} disabled={importLoading || fullImportLoading || manufacturerSyncLoading}>
             {showSettings ? "Chiudi impostazioni" : "Apri impostazioni"}
         </button>
         {showSettings && <SettingsPanel />}
@@ -235,7 +344,7 @@ function App() {
 
         <button
             onClick={handleFetchCatalog}
-            disabled={catalogLoading || preflightLoading || importLoading || !companyCode.trim()}
+            disabled={catalogBusy || !companyCode.trim()}
         >
             {catalogLoading ? "Caricamento in corso..." : "Carica catalogo"}
         </button>
@@ -258,9 +367,45 @@ function App() {
 
                 <p>Prodotti selezionati: {selectedIds.length}</p>
 
+                <section>
+                    <h4>Catalogo completo</h4>
+                    <button onClick={handlePreflightFull} disabled={catalogBusy}>
+                        {fullPreflightLoading ? "Controlli preliminari in corso..." : "Esegui controlli preliminari del catalogo completo"}
+                    </button>
+                    {fullPreflightError && <p role="alert">Controlli preliminari non riusciti: {fullPreflightError}</p>}
+                    {fullPreflightResult && (
+                        <>
+                            <PreflightSummary result={fullPreflightResult} title="Controlli preliminari completati" />
+                            {fullPreflightResult.products.readyForBase > 0 ? (
+                                <button onClick={handleImportFull} disabled={catalogBusy || typeof dryRunMode !== "boolean"}>
+                                    Importa / aggiorna catalogo completo
+                                </button>
+                            ) : (
+                                <p>Nessun prodotto del catalogo è pronto per l'importazione.</p>
+                            )}
+                        </>
+                    )}
+                    {fullImportLoading && <p>Importazione catalogo in corso...</p>}
+                    {fullImportError && <p role="alert">{fullImportError}</p>}
+                    {fullImportResult && <ImportSummary result={fullImportResult} dryRunMode={dryRunMode} />}
+                </section>
+
+                <section>
+                    <h4>Produttori</h4>
+                    <button onClick={handleManufacturerSync} disabled={catalogBusy || typeof dryRunMode !== "boolean"}>
+                        {manufacturerSyncLoading ? "Sincronizzazione produttori in corso..." : "Sincronizza produttori"}
+                    </button>
+                    {manufacturerSyncError && <p role="alert">{manufacturerSyncError}</p>}
+                    {manufacturerSyncResult && (
+                        <p role="status">{dryRunMode ? "Sincronizzazione simulata completata." : "Sincronizzazione completata."}</p>
+                    )}
+                </section>
+
+                <h4>Prodotti selezionati</h4>
+
                 <button
                     onClick={handlePreflightSelected}
-                    disabled={selectedIds.length === 0 || preflightLoading || importLoading || catalogLoading}
+                    disabled={selectedIds.length === 0 || catalogBusy}
                 >
                     {preflightLoading ? "Controlli preliminari in corso..." : "Verifica prodotti selezionati"}
                 </button>
@@ -268,17 +413,11 @@ function App() {
                 {preflightError && <p role="alert">Controlli preliminari non riusciti: {preflightError}</p>}
                 {preflightResult && (
                     <section>
-                        <h4>Controlli preliminari completati</h4>
-                        <p>Prodotti selezionati: {preflightResult.selection.selected}</p>
-                        <p>Prodotti pronti per Base.com: {preflightResult.products.readyForBase}</p>
-                        <p>Categorie riconosciute: {preflightResult.categories.mapped}</p>
-                        <p>Categorie non mappate: {preflightResult.categories.unmapped}</p>
-                        <p>Prodotti esclusi per categoria mancante: {preflightResult.products.missingSourceCategory}</p>
-                        <p>Prodotti esclusi per categoria non mappata: {preflightResult.products.unmappedValidCategory}</p>
+                        <PreflightSummary result={preflightResult} title="Controlli preliminari completati" />
                         {preflightResult.products.readyForBase > 0 ? (
                             <button
                                 onClick={handleImportSelected}
-                                disabled={importLoading || typeof dryRunMode !== "boolean"}
+                                disabled={catalogBusy || typeof dryRunMode !== "boolean"}
                             >
                                 Importa prodotti selezionati
                             </button>
@@ -290,33 +429,7 @@ function App() {
 
                 {importLoading && <p>Importazione in corso...</p>}
                 {importError && <p role="alert">{importError}</p>}
-                {importResult && (
-                    <section>
-                        <h4>{importResult.ok
-                            ? (dryRunMode ? "Simulazione completata" : "Importazione completata")
-                            : "Importazione completata con problemi"}</h4>
-                        <p>Prodotti selezionati: {importResult.selected}</p>
-                        <p>Prodotti elaborati: {importResult.processed}</p>
-                        <p>Prodotti creati: {importResult.created}</p>
-                        <p>Prodotti aggiornati: {importResult.updated}</p>
-                        <p>Prodotti invariati: {importResult.unchanged}</p>
-                        <p>Operazioni simulate: {importResult.simulated}</p>
-                        <p>Errori: {importResult.errors}</p>
-                        <p>Avvisi EAN: {importResult.eanWarningsCount}</p>
-                        {importResult.uncertainSkus.length > 0 && (
-                            <div>
-                                <p>Operazioni con esito incerto:</p>
-                                <ul>{importResult.uncertainSkus.map((sku) => <li key={sku}>{sku}</li>)}</ul>
-                            </div>
-                        )}
-                        {importResult.errorSkus.length > 0 && (
-                            <div>
-                                <p>Prodotti con errore:</p>
-                                <ul>{importResult.errorSkus.map((sku) => <li key={sku}>{sku}</li>)}</ul>
-                            </div>
-                        )}
-                    </section>
-                )}
+                {importResult && <ImportSummary result={importResult} dryRunMode={dryRunMode} />}
 
                 <hr />
 
@@ -326,7 +439,7 @@ function App() {
                                 type="checkbox"
                                 checked={selectedIds.includes(product.id)}
                                 onChange={() => handleToggleProduct(product.id)}
-                                disabled={preflightLoading || importLoading || typeof product.id !== "string" || !product.id.trim()}
+                                disabled={catalogBusy || typeof product.id !== "string" || !product.id.trim()}
                                 aria-label={`Seleziona ${product.title ?? "prodotto"}`}
                             />
 

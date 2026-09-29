@@ -68,6 +68,11 @@ export function prepareSelectedVudooCatalog(parsed, selectedIds) {
   return prepareVudooSources(parsed, sources, { skipMissingSourceCategory: true });
 }
 
+export function prepareFullVudooCatalog(parsed, { skipMissingSourceCategory = true } = {}) {
+  if (!Array.isArray(parsed?.products)) throw new Error('Catalogo Vudoo parsato non valido.');
+  return prepareVudooSources(parsed, parsed.products, { skipMissingSourceCategory });
+}
+
 export async function loadVudooCatalog(codiceAzienda, options = {}) {
   const parsed = await fetchParsedVudooCatalog(codiceAzienda);
   const requestedSources = options.selectSources ? await options.selectSources(parsed.products) : parsed.products;
@@ -151,6 +156,11 @@ export async function importPreparedVudooCatalog(catalog) {
 
 export async function syncVudooManufacturers(codiceAzienda, options = {}) {
   const catalog = await loadVudooCatalog(codiceAzienda, options);
+  return syncPreparedVudooManufacturers(catalog);
+}
+
+export async function syncPreparedVudooManufacturers(catalog) {
+  if (!Array.isArray(catalog?.uniqueProducts)) throw new Error('Catalogo Vudoo preparato non valido.');
   await syncManufacturers(catalog.uniqueProducts);
   return 0;
 }
