@@ -8,6 +8,10 @@ import {
 } from "./settingsManager.js";
 import { createWriteGuard } from "./writeGuard.js";
 import { toCatalogProductDto } from "./catalogDto.js";
+import {
+  PRODUCT_OVERRIDES_FILE_NAME, loadProductOverrides, saveProductOverride,
+} from './productOverrides.js';
+import { getProductOverride, effectiveSourceProduct } from './effectiveProduct.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,6 +68,9 @@ async function bootstrap() {
     await import("./fullCatalog.js");
 
   let activeCatalog = null;
+  let activeCompanyCode = null;
+  let activeOverrides = {};
+  const productOverridesPath = path.join(app.getPath('userData'), PRODUCT_OVERRIDES_FILE_NAME);
   const writeGuard = createWriteGuard();
 
   async function runWriteOperation(operation) {
@@ -173,11 +180,17 @@ async function bootstrap() {
       }
 
       const normalizedCompanyCode = companyCode.trim();
+      const storedOverrides = await loadProductOverrides(productOverridesPath);
       activeCatalog = null;
+      activeCompanyCode = null;
       const startedAt = Date.now();
       activeCatalog = await fetchParsedVudooCatalog(normalizedCompanyCode);
+      activeCompanyCode = normalizedCompanyCode;
+      activeOverrides = storedOverrides;
 
-      const productsForRenderer = activeCatalog.products.map(toCatalogProductDto);
+      const productsForRenderer = activeCatalog.products.map(product =>
+        toCatalogProductDto(effectiveSourceProduct(product,
+          product?.id ? getProductOverride(activeOverrides, activeCompanyCode, product.id) : {})));
 
       return {
         channelTitle: activeCatalog.channelTitle,
@@ -187,28 +200,56 @@ async function bootstrap() {
       };
     });
 
+    ipcMain.handle('catalog:save-product-override', async (_event, input) => {
+      try {
+        if (writeGuard.isBusy()) throw new Error('Attendi la fine dell’importazione o sincronizzazione.');
+        if (!activeCatalog || !activeCompanyCode) throw new Error('Carica prima un catalogo Vudoo.');
+        if (!input || typeof input !== 'object' || Array.isArray(input) ||
+            Object.keys(input).some(key => !['id', 'title', 'description'].includes(key)) ||
+            typeof input.id !== 'string' || !input.id.trim()) {
+          throw new Error('ID prodotto non valido.');
+        }
+        const matches = activeCatalog.products.filter(product => product.id === input.id);
+        if (!matches.length) throw new Error('Prodotto non presente nel catalogo attivo.');
+        const source = matches[0];
+        if (matches.some(product => product.title !== source.title ||
+            product.description !== source.description)) {
+          throw new Error('Record con lo stesso ID hanno titoli o descrizioni discordanti.');
+        }
+        activeOverrides = await saveProductOverride(productOverridesPath, activeOverrides,
+          activeCompanyCode, source, { title: input.title, description: input.description });
+        const fields = getProductOverride(activeOverrides, activeCompanyCode, source.id);
+        return { ok: true, product: toCatalogProductDto(effectiveSourceProduct(source, fields)) };
+      } catch (error) {
+        return { ok: false, error: redactToken(error?.message ?? error) };
+      }
+    });
+
     ipcMain.handle("catalog:preflight-selected", async (_event, selectedIds) => {
       try {
-        return { ok: true, result: await preflightSelectedCatalog(activeCatalog, selectedIds) };
+        return { ok: true, result: await preflightSelectedCatalog(activeCatalog, selectedIds,
+          activeOverrides, activeCompanyCode) };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
     });
 
     ipcMain.handle("catalog:import-selected", async (_event, selectedIds) => {
-      return runWriteOperation(() => importSelectedCatalog(activeCatalog, selectedIds));
+      return runWriteOperation(() => importSelectedCatalog(activeCatalog, selectedIds,
+        activeOverrides, activeCompanyCode));
     });
 
     ipcMain.handle("catalog:preflight-all", async () => {
       try {
-        return { ok: true, result: await preflightFullCatalog(activeCatalog) };
+        return { ok: true, result: await preflightFullCatalog(activeCatalog,
+          activeOverrides, activeCompanyCode) };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
     });
 
     ipcMain.handle("catalog:import-all", async () =>
-      runWriteOperation(() => importFullCatalog(activeCatalog)));
+      runWriteOperation(() => importFullCatalog(activeCatalog, activeOverrides, activeCompanyCode)));
 
     ipcMain.handle("catalog:sync-manufacturers", async () =>
       runWriteOperation(() => syncFullCatalogManufacturers(activeCatalog)));

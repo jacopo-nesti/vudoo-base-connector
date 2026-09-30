@@ -148,6 +148,24 @@ function App() {
         }
     }
 
+    async function handleSaveProductOverride(input) {
+        const response = await window.electronAPI.saveProductOverride(input);
+        if (!response?.ok || !response.product) {
+            throw new Error(response?.error || 'Impossibile salvare le modifiche al prodotto.');
+        }
+        setCatalog(current => current && ({
+            ...current,
+            products: current.products.map(product =>
+                product.id === response.product.id ? response.product : product),
+        }));
+        invalidateSelectedResults();
+        setFullPreflightResult(null);
+        setFullPreflightError('');
+        setFullImportResult(null);
+        setFullImportError('');
+        return response.product;
+    }
+
     function updateSelection(nextIds) {
         const change = selectionChange(selectedIds, nextIds);
         if (!change) return;
@@ -323,6 +341,7 @@ function App() {
     response, handlePing, environment, environmentError, loading, handleEnvironmentCheck,
     dryRunMode, testModeEnabled, baseApiRequestsPerMinute, importReadStrategy, runtimeModeError,
     companyCode, setCompanyCode, catalog, catalogLoading, catalogError, catalogBusy, handleFetchCatalog,
+    handleSaveProductOverride,
     selectedIds, previousSelectedIds, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter,
     brandFilter, setBrandFilter, categories, brands, filteredProducts, selectedIdSet,
     selectedProducts, visibleSelectedCount, selectableVisibleCount, hasActiveFilters,

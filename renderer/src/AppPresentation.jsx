@@ -52,6 +52,7 @@ export default function AppPresentation({ model: app }) {
       onDeselectFiltered: deselectFiltered, onClearSelection: clearSelection,
       onUndo: app.undoLastSelectionChange, canUndo: app.previousSelectedIds !== null,
       onPreflightSelected: app.handlePreflightSelected, preflightLoading: app.preflightLoading,
+      onSaveProduct: app.handleSaveProductOverride,
     }} />}
     {page === 'operations' && <OperationsPage catalog={catalog} selectedCount={selectedIds.length} catalogBusy={catalogBusy} dryRunMode={app.dryRunMode} fullPreflightLoading={app.fullPreflightLoading} preflightLoading={app.preflightLoading} manufacturerSyncLoading={manufacturerSyncLoading} manufacturerSyncError={app.manufacturerSyncError} manufacturerSyncResult={app.manufacturerSyncResult} onPreflightFull={app.handlePreflightFull} onPreflightSelected={app.handlePreflightSelected} onSync={app.handleManufacturerSync} onCatalog={() => navigate('catalog')} />}
     {page === 'settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni</h1><p>Configura le modalità operative e i limiti dell’integrazione.</p></div></div><SettingsPanel /></div>}

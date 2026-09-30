@@ -12,6 +12,7 @@ export default function CatalogPage({ model }) {
     visibleSelectedCount, selectableVisibleCount, hasActiveFilters,
     onToggle, onSelectFiltered, onDeselectFiltered, onClearSelection, onUndo,
     canUndo, onPreflightSelected, preflightLoading,
+    onSaveProduct,
   } = model;
 
   useEffect(() => { setDetailProduct(null); }, [catalog]);
@@ -60,7 +61,7 @@ export default function CatalogPage({ model }) {
         {filteredProducts.length === 0 && <tr><td colSpan="7" className="table-empty">{catalog.products.length === 0 ? 'Il catalogo non contiene prodotti.' : 'Nessun prodotto corrisponde ai filtri selezionati.'}</td></tr>}
       </tbody></table></div></section>
 
-      <ProductDetailsDialog product={detailProduct} onClose={() => setDetailProduct(null)} />
+      <ProductDetailsDialog product={detailProduct} onClose={() => setDetailProduct(null)} onSave={onSaveProduct} />
     </>}
   </div>;
 }

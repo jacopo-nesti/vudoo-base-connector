@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import * as xml from 'fast-xml-parser';
 import { catalogXml, itemXml, extraFields, parameters as fieldParameters, parameterGroups, categoryMappings } from './fixtures/vudoo.js';
 import { normalizeVudooProduct } from '../src/vudooXml.js';
+import { productKey } from '../electron/effectiveProduct.js';
 import { parseCatalog, parseCatalogXml } from '../src/converter.js';
 import { parseFeedNumber, normalizeProduct, buildBasePayload, buildBaseUpdatePayload, detectAndFilterDuplicates, sanitizeTextForBase } from '../src/products.js';
 
@@ -387,6 +388,29 @@ test('Electron: full import can create through the existing core in mocked real 
   assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
   assert.equal(result.calls.some(call => call.method === 'VUDOO_GET'), false);
 });
+
+for (const [scope, entry, action] of [
+  ['selected', '../electron/selectedImport.js', (api, parsed, overrides) =>
+    api.importSelectedCatalog(parsed, ['389578'], overrides, 'test-company')],
+  ['full', '../electron/fullCatalog.js', (api, parsed, overrides) =>
+    api.importFullCatalog(parsed, overrides, 'test-company')],
+]) {
+  test(`Electron: ${scope} import sends effective title and description without a second Vudoo fetch`, async () => {
+    const parsed = parseCatalog(catalogXml());
+    const originalTitle = parsed.products[0].title;
+    const overrides = { [productKey('test-company', '389578')]: {
+      title: 'Titolo personalizzato', description: 'Descrizione personalizzata',
+    } };
+    const run = await sandbox({ entry, env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+      action: async api => { assert.equal((await action(api, parsed, overrides)).created, 1); },
+    });
+    const create = run.calls.find(call => call.method === 'addInventoryProduct');
+    assert.equal(create.parameters.text_fields.name, 'Titolo personalizzato');
+    assert.equal(create.parameters.text_fields.description, 'Descrizione personalizzata');
+    assert.equal(parsed.products[0].title, originalTitle);
+    assert.equal(run.calls.some(call => call.method === 'VUDOO_GET'), false);
+  });
+}
 
 test('Electron: manufacturer sync uses activeCatalog, preserves all brands and DRY_RUN', async () => {
   const parsed = parseCatalog(catalogXml(

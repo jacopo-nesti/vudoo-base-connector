@@ -3,22 +3,23 @@ import {
   importPreparedVudooCatalog, syncPreparedVudooManufacturers,
 } from '../src/vudooImport.js';
 import { toPreflightResult, toImportResult } from './catalogResults.js';
+import { prepareEffectiveFullCatalog } from './effectiveCatalog.js';
 
 function requireCatalog(activeCatalog) {
   if (!activeCatalog) throw new Error('Carica prima un catalogo Vudoo.');
   return activeCatalog;
 }
 
-export async function preflightFullCatalog(activeCatalog) {
+export async function preflightFullCatalog(activeCatalog, overrides = {}, companyCode) {
   const startedAt = Date.now();
-  const prepared = prepareFullVudooCatalog(requireCatalog(activeCatalog));
+  const prepared = prepareEffectiveFullCatalog(requireCatalog(activeCatalog), overrides, companyCode);
   return { ...toPreflightResult(await preflightPreparedVudooCatalog(prepared)),
     durationMs: Math.max(0, Date.now() - startedAt) };
 }
 
-export async function importFullCatalog(activeCatalog) {
+export async function importFullCatalog(activeCatalog, overrides = {}, companyCode) {
   const startedAt = Date.now();
-  const prepared = prepareFullVudooCatalog(requireCatalog(activeCatalog));
+  const prepared = prepareEffectiveFullCatalog(requireCatalog(activeCatalog), overrides, companyCode);
   return { ...toImportResult(await importPreparedVudooCatalog(prepared)),
     durationMs: Math.max(0, Date.now() - startedAt) };
 }
