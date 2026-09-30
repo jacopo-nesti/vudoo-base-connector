@@ -1,7 +1,10 @@
+import { useEffect, useState } from 'react';
 import { isSelectableId, variantDetails } from '../catalogFilters.js';
 import { formatDuration } from '../importTiming.js';
+import ProductDetailsDialog from '../components/ProductDetailsDialog.jsx';
 
 export default function CatalogPage({ model }) {
+  const [detailProduct, setDetailProduct] = useState(null);
   const {
     companyCode, setCompanyCode, catalog, catalogLoading, catalogError, catalogBusy, onFetch,
     searchQuery, setSearchQuery, categoryFilter, setCategoryFilter, brandFilter, setBrandFilter,
@@ -10,6 +13,8 @@ export default function CatalogPage({ model }) {
     onToggle, onSelectFiltered, onDeselectFiltered, onClearSelection, onUndo,
     canUndo, onPreflightSelected, preflightLoading,
   } = model;
+
+  useEffect(() => { setDetailProduct(null); }, [catalog]);
 
   return <div className="page-stack">
     <div className="page-heading"><div><h1>Catalogo Vudoo</h1><p>Carica, esplora e seleziona i prodotti da importare su Base.com.</p></div>{catalog && <span className="tag tag-blue">{catalog.totalProducts} prodotti caricati</span>}</div>
@@ -43,17 +48,19 @@ export default function CatalogPage({ model }) {
       </div>
       <p className="catalog-count">{catalog.totalProducts} nel catalogo · {filteredProducts.length} visualizzati · {selectedIds.length} selezionati{selectedIds.length > visibleSelectedCount && <> · {selectedIds.length - visibleSelectedCount} selezionati fuori dai filtri attuali</>}</p>
 
+      <details className="card selected-panel"><summary>Visualizza prodotti selezionati <span className="tag tag-blue">{selectedIds.length}</span></summary><div className="selected-panel-content">{selectedProducts.length === 0 ? <p className="muted">Nessun prodotto selezionato.</p> : <div className="selected-list">{selectedProducts.map(product => <div key={product.id} className="selected-row"><div><strong>{product.title || 'Senza titolo'}</strong><small>{[product.sku, product.brand, ...variantDetails(product).map(([, value]) => value)].filter(Boolean).join(' · ')}</small></div><div className="selected-row-end"><span className="mono">{product.price ?? '—'}</span><button className="btn btn-danger-quiet btn-sm" type="button" disabled={catalogBusy} onClick={() => onToggle(product.id)}>Rimuovi</button></div></div>)}</div>}</div></details>
+
       <section className="card table-card" aria-label="Prodotti del catalogo"><div className="table-scroll"><table className="table"><thead><tr><th className="check-col"><span className="sr-only">Selezione</span></th><th>SKU</th><th>Prodotto</th><th>Brand</th><th>Categoria</th><th>MPN</th><th className="numeric">Prezzo</th></tr></thead><tbody>
         {filteredProducts.map(({ product, index }) => {
           const selectable = isSelectableId(product.id);
           const selected = selectable && selectedIdSet.has(product.id);
           const details = variantDetails(product).map(([, value]) => value).join(' · ');
-          return <tr key={selectable ? `${product.id}-${index}` : `missing-${product.sku ?? 'id'}-${index}`} className={selected ? 'selected' : ''}><td className="check-col"><input type="checkbox" checked={selected} onChange={() => onToggle(product.id)} disabled={catalogBusy || !selectable} aria-label={`Seleziona ${product.title ?? 'prodotto'}`} /></td><td className="mono sku-cell">{product.sku || '—'}</td><td className="product-cell"><strong>{product.title || 'Senza titolo'}</strong>{details && <small>{details}</small>}{!selectable && <small className="danger-text">ID non disponibile · selezione disabilitata</small>}</td><td>{product.brand && <span className="tag tag-gray">{product.brand}</span>}</td><td>{product.category && <span className="tag tag-blue">{product.category}</span>}</td><td className="muted-cell">{product.mpn || '—'}</td><td className="numeric mono">{product.price ?? '—'}</td></tr>;
+          return <tr key={selectable ? `${product.id}-${index}` : `missing-${product.sku ?? 'id'}-${index}`} className={selected ? 'selected' : ''}><td className="check-col"><input type="checkbox" checked={selected} onChange={() => onToggle(product.id)} disabled={catalogBusy || !selectable} aria-label={`Seleziona ${product.title ?? 'prodotto'}`} /></td><td className="mono sku-cell">{product.sku || '—'}</td><td className="product-cell"><div className="product-title-line"><strong>{product.title || 'Senza titolo'}</strong><button className="product-details-action" type="button" onClick={event => { event.stopPropagation(); setDetailProduct(product); }} aria-label={`Dettagli di ${product.title || 'prodotto senza titolo'}`}><span aria-hidden="true">⌕</span> Dettagli</button></div>{details && <small>{details}</small>}{!selectable && <small className="danger-text">ID non disponibile · selezione disabilitata</small>}</td><td>{product.brand && <span className="tag tag-gray">{product.brand}</span>}</td><td>{product.category && <span className="tag tag-blue">{product.category}</span>}</td><td className="muted-cell">{product.mpn || '—'}</td><td className="numeric mono">{product.price ?? '—'}</td></tr>;
         })}
         {filteredProducts.length === 0 && <tr><td colSpan="7" className="table-empty">{catalog.products.length === 0 ? 'Il catalogo non contiene prodotti.' : 'Nessun prodotto corrisponde ai filtri selezionati.'}</td></tr>}
       </tbody></table></div></section>
 
-      <details className="card selected-panel"><summary>Visualizza prodotti selezionati <span className="tag tag-blue">{selectedIds.length}</span></summary><div className="selected-panel-content">{selectedProducts.length === 0 ? <p className="muted">Nessun prodotto selezionato.</p> : <div className="selected-list">{selectedProducts.map(product => <div key={product.id} className="selected-row"><div><strong>{product.title || 'Senza titolo'}</strong><small>{[product.sku, product.brand, ...variantDetails(product).map(([, value]) => value)].filter(Boolean).join(' · ')}</small></div><div className="selected-row-end"><span className="mono">{product.price ?? '—'}</span><button className="btn btn-quiet btn-sm" type="button" disabled={catalogBusy} onClick={() => onToggle(product.id)}>Rimuovi</button></div></div>)}</div>}</div></details>
+      <ProductDetailsDialog product={detailProduct} onClose={() => setDetailProduct(null)} />
     </>}
   </div>;
 }

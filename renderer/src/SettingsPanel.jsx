@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { rateLimitGuidance } from './rateLimitGuidance.js';
 
 const numberFields = [
@@ -28,6 +28,57 @@ function errorMessage(response) {
     return 'Attendi la fine dell’importazione prima di riavviare.';
   }
   return 'Impossibile completare l’operazione sulle impostazioni. Riprova.';
+}
+
+const categoryPolicyOptions = [
+  { value: 'block', label: 'Blocca l’importazione' },
+  { value: 'skip', label: 'Escludi i prodotti non mappati' },
+];
+
+function CategoryPolicySelect({ value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function closeOnOutsideClick(event) {
+      if (!pickerRef.current?.contains(event.target)) setOpen(false);
+    }
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  const selected = categoryPolicyOptions.find(option => option.value === value);
+  return <div className="form-field">
+    <span id="category-policy-label">Gestione categorie non mappate</span>
+    <div className="policy-picker" ref={pickerRef}>
+      <button className="select policy-picker-trigger" type="button" ref={triggerRef}
+        aria-labelledby="category-policy-label category-policy-value" aria-haspopup="listbox"
+        aria-expanded={open} aria-controls="category-policy-options" disabled={disabled}
+        onClick={() => setOpen(current => !current)}>
+        <span id="category-policy-value">{selected?.label ?? value}</span><span aria-hidden="true">⌄</span>
+      </button>
+      {open && <div className="policy-picker-options" id="category-policy-options" role="listbox" aria-labelledby="category-policy-label">
+        {categoryPolicyOptions.map(option => <button key={option.value} className="policy-picker-option" type="button"
+          role="option" aria-selected={value === option.value} onClick={() => {
+            onChange(option.value);
+            setOpen(false);
+            triggerRef.current?.focus();
+          }}>{option.label}</button>)}
+      </div>}
+    </div>
+  </div>;
 }
 
 function SettingsPanel() {
@@ -179,13 +230,8 @@ function SettingsPanel() {
             <p className={`alert ${draft.dryRun ? 'alert-warning' : 'alert-danger'}`}>{draft.dryRun
               ? 'Modalità simulazione: nessuna modifica verrà scritta su Base.com.'
               : 'ATTENZIONE: modalità reale. Le operazioni possono modificare Base.com.'}</p>
-            <label className="form-field">
-              <span>Gestione categorie non mappate</span>
-              <select className="select" value={draft.unmappedCategoryPolicy} onChange={event => updateDraft('unmappedCategoryPolicy', event.target.value)}>
-                <option value="block">Blocca l’importazione</option>
-                <option value="skip">Escludi i prodotti non mappati</option>
-              </select>
-            </label>
+            <CategoryPolicySelect value={draft.unmappedCategoryPolicy}
+              onChange={value => updateDraft('unmappedCategoryPolicy', value)} disabled={busy} />
           </fieldset>
 
           <fieldset className="card" disabled={busy}>

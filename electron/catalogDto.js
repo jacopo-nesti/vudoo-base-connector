@@ -10,5 +10,10 @@ export function toCatalogProductDto(product) {
     size: product.size,
     color: product.color,
     itemGroupId: product.item_group_id,
+    ean: product.ean,
+    description: product.description,
+    availability: product.availability,
+    quantity: product.quantity,
+    condition: product.condition,
   };
 }
