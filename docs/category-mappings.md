@@ -1,6 +1,6 @@
 # Categorie canoniche
 
-Il connettore separa tre valori: categoria originale Vudoo → categoria canonica interna → percorso categoria Base.com. Il valore sorgente resta disponibile nel prodotto. Le associazioni alle tassonomie marketplace si configurano direttamente in Base.com.
+Il connettore separa tre valori: categoria originale Vudoo → categoria canonica interna → percorso categoria Base.com. Il valore sorgente resta disponibile nel prodotto. Un mapping Etsy locale, separato e privato associa ora le categorie canoniche alla tassonomia Etsy; non modifica ancora le associazioni marketplace configurate in Base.com e non effettua chiamate Etsy.
 
 ## Configurazione
 
@@ -41,3 +41,9 @@ Se un fornitore già configurato introduce una nuova categoria, il preflight ne 
 Una categoria sorgente reale ma priva di mapping è diversa. Anche un valore `null` nel file di un supplier già configurato indica una categoria conosciuta ma non ancora mappata. `UNMAPPED_CATEGORY_POLICY=block` (default) ferma preflight/import prima delle scritture Base; `skip` esclude solo i prodotti interessati. In entrambi i casi il preflight mostra tutte le categorie reali non mappate e i relativi conteggi. La prima scoperta di un supplier genera lo scaffold e blocca sempre l'import; dalle esecuzioni successive i suoi valori `null` seguono la policy.
 
 Per i prodotti importabili il connettore riusa la gerarchia esistente: cerca i livelli Base già presenti e crea soltanto quelli mancanti. La sincronizzazione separata dei produttori non dipende dai mapping categoria.
+
+## Associazioni canoniche verso Etsy
+
+`config/marketplaces/etsy/categories.json` è la tassonomia locale privata. `config/marketplaces/etsy/canonical-mapping.json` conserva una decisione per ogni categoria canonica: `mapped` con `etsy_category_id` e `etsy_path` identici a un record della tassonomia, `pending` se la destinazione richiede revisione, oppure `not_applicable` se la categoria non deve essere associata. L'assenza di una decisione è un errore di configurazione, non un mapping implicito.
+
+Entrambi i file Etsy sono ignorati da Git. Il modulo `src/marketplaces/etsyCategories.js` li legge e valida insieme a `config/canonical-categories.json`, poi restituisce uno stato strutturato per una categoria canonica. Non cerca somiglianze, non sceglie categorie automaticamente, non scrive file e non è ancora collegato all'import Base.com. Quando si aggiunge una categoria canonica, occorre assegnarle esplicitamente uno dei tre stati nel file privato.
