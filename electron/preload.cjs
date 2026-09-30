@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   restartApp: () => ipcRenderer.invoke("app:restart"),
   fetchCatalog: (companyCode) =>
     ipcRenderer.invoke("catalog:fetch", companyCode),
+  saveProductOverride: (input) => ipcRenderer.invoke('catalog:save-product-override', input),
   preflightSelected: (selectedIds) =>
     ipcRenderer.invoke("catalog:preflight-selected", selectedIds),
   importSelected: (selectedIds) =>

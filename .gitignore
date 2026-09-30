@@ -8,3 +8,5 @@ reports/no_name_products.json
 *.vs
 .history/
 renderer/dist/
+config/marketplaces/etsy/
+etsy-mapping/

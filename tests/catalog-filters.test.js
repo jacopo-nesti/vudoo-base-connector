@@ -117,7 +117,23 @@ test('DTO renderer conserva Size, Color e Item Group ID dal prodotto sorgente', 
   assert.equal(dto.itemGroupId, 'GROUP-A');
   assert.equal(dto.id, source.id);
   assert.equal(dto.category, source.product_type);
+  assert.equal(dto.description, source.description);
+  assert.equal(dto.quantity, source.quantity);
+  assert.equal(dto.availability, source.availability);
+  assert.equal(dto.condition, source.condition);
   assert.equal(Object.hasOwn(dto, 'item_group_id'), false);
+  assert.equal(Object.hasOwn(dto, 'shipping'), false);
+});
+
+test('DTO dettagli include l’EAN senza trasferire il record Vudoo completo', () => {
+  const source = { id: '389578', ean: '8056370403714', description: 'Descrizione',
+    product_type: 'Profumi', privateField: 'non esportare' };
+  const dto = toCatalogProductDto(source);
+  assert.equal(dto.ean, source.ean);
+  assert.equal(dto.description, source.description);
+  assert.equal(dto.category, source.product_type);
+  assert.equal(Object.hasOwn(dto, 'privateField'), false);
+  assert.equal(Object.hasOwn(dto, 'product_type'), false);
 });
 
 test('Size e Color compaiono solo se valorizzati, senza righe vuote', () => {
