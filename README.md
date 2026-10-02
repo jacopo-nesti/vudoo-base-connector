@@ -47,6 +47,10 @@ Per il dettaglio completo consulta la [Guida alla Configurazione](./docs/configu
 
 La CLI continua a usare `.env`. L'app Electron carica `.env` all'avvio e poi applica le impostazioni salvate in `settings.json` nella directory dati standard dell'app (`app.getPath('userData')`). Il file rimane fuori dal repository e non contiene il token Base.com. Apri **Impostazioni** nella GUI per usare i valori predefiniti, personalizzare le opzioni o ripristinarle. Le modifiche salvate si applicano al core dopo il riavvio dell'app; la modalità simulazione mostrata durante la sessione indica sempre quella realmente attiva. Il ripristino elimina gli override e torna ai valori di `.env` o ai default applicativi. Valori `.env` non validi restano errori di configurazione del core finché non vengono corretti o sostituiti da impostazioni valide.
 
+### Diagnostica Amazon SP-API
+
+Per la prima integrazione Amazon, configura localmente in `.env` `AMAZON_REFRESH_TOKEN`, `AMAZON_LWA_CLIENT_ID`, `AMAZON_LWA_CLIENT_SECRET`, `AMAZON_ENV=sandbox` e `AMAZON_REGION=EU`. La pagina **Diagnostica** offre **Verifica Amazon**: controlla i valori e richiede un access token temporaneo a Login With Amazon. È una chiamata esterna di autenticazione, senza richieste SP-API e senza scritture sui dati Amazon. Il token resta nel processo Node e non viene salvato o inviato alla GUI. L'endpoint sandbox EU è configurato per le future operazioni SP-API, che non sono ancora implementate.
+
 ## 📂 Struttura Attuale delle Cartelle e dei Moduli
 
 Il progetto è organizzato in modo modulare: la CLI è l'entry point principale, la logica runtime è in `src/` e le utility del precedente flusso locale sono in `tools/legacy/`:

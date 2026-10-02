@@ -14,6 +14,9 @@ function App() {
     const [environment, setEnvironment] = useState(null);
     const [loading, setLoading] = useState(false);
     const [environmentError, setEnvironmentError] = useState("");
+    const [amazonDiagnostic, setAmazonDiagnostic] = useState(null);
+    const [amazonDiagnosticLoading, setAmazonDiagnosticLoading] = useState(false);
+    const [amazonDiagnosticError, setAmazonDiagnosticError] = useState("");
     const [dryRunMode, setDryRunMode] = useState(undefined);
     const [testModeEnabled, setTestModeEnabled] = useState(undefined);
     const [baseApiRequestsPerMinute, setBaseApiRequestsPerMinute] = useState(null);
@@ -114,6 +117,19 @@ function App() {
             setEnvironmentError(error?.message ?? "Verifica ambiente non riuscita.");
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function handleAmazonDiagnostic() {
+        setAmazonDiagnosticLoading(true);
+        setAmazonDiagnosticError("");
+        setAmazonDiagnostic(null);
+        try {
+            setAmazonDiagnostic(await window.electronAPI.diagnoseAmazon());
+        } catch {
+            setAmazonDiagnosticError("Impossibile eseguire la verifica Amazon.");
+        } finally {
+            setAmazonDiagnosticLoading(false);
         }
     }
 
@@ -339,6 +355,7 @@ function App() {
   return <AppPresentation model={{
     page, setPage, importScope,
     response, handlePing, environment, environmentError, loading, handleEnvironmentCheck,
+    amazonDiagnostic, amazonDiagnosticLoading, amazonDiagnosticError, handleAmazonDiagnostic,
     dryRunMode, testModeEnabled, baseApiRequestsPerMinute, importReadStrategy, runtimeModeError,
     companyCode, setCompanyCode, catalog, catalogLoading, catalogError, catalogBusy, handleFetchCatalog,
     handleSaveProductOverride,

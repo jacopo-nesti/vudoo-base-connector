@@ -1,6 +1,28 @@
 import { token, testMode, dryRun, getBaseApiRequestsPerMinute, getUnmappedCategoryPolicy } from './config.js';
 import { log, redactToken } from './logger.js';
 import { getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi.js';
+import { getAmazonConfig } from './marketplaces/amazon/config.js';
+import { getAmazonAccessToken } from './marketplaces/amazon/auth.js';
+
+export async function runAmazonDiagnostic(options = {}) {
+  let config;
+  try {
+    config = getAmazonConfig(options.env);
+  } catch (error) {
+    return { ok: false, configured: false, authenticated: false, error: redactToken(error.message) };
+  }
+
+  const result = {
+    configured: true, authenticated: false,
+    environment: config.environment, region: config.region, endpoint: config.endpoint,
+  };
+  try {
+    await getAmazonAccessToken({ config, fetchImpl: options.fetchImpl, timeoutMs: options.timeoutMs });
+    return { ok: true, ...result, authenticated: true };
+  } catch (error) {
+    return { ok: false, ...result, error: redactToken(error.message) };
+  }
+}
 
 export async function runEnvironmentCheck() {
   log('========================================');

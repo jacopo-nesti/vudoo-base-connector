@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electronAPI", {
   ping: () => ipcRenderer.invoke("app:ping"),
   checkEnvironment: () => ipcRenderer.invoke("environment:check"),
+  diagnoseAmazon: () => ipcRenderer.invoke("amazon:diagnose"),
   getRuntimeMode: () => ipcRenderer.invoke("app:runtime-mode"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),

@@ -43,7 +43,7 @@ async function bootstrap() {
 
   applySettingsToEnvironment(savedSettings);
 
-  const { runEnvironmentCheck } =
+  const { runEnvironmentCheck, runAmazonDiagnostic } =
     await import("../src/checker.js");
 
   const { fetchParsedVudooCatalog } =
@@ -160,6 +160,14 @@ async function bootstrap() {
 
     ipcMain.handle("environment:check", async () => {
       return await runEnvironmentCheck();
+    });
+    ipcMain.handle("amazon:diagnose", async () => {
+      try {
+        return await runAmazonDiagnostic();
+      } catch (error) {
+        return { ok: false, configured: false, authenticated: false,
+          error: redactToken(error?.message ?? error) };
+      }
     });
     ipcMain.handle("app:runtime-mode", () => ({
       dryRun: dryRun === "true" ? true : dryRun === "false" ? false : null,
