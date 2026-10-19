@@ -2,7 +2,9 @@
 
 ## 📋 Descrizione del Progetto
 
-**Vudoo Base Connector** è un progetto Node.js per la sincronizzazione dei cataloghi prodotto da Vudoo verso **Base.com**, con normalizzazione e validazione dei dati, aggiornamenti selettivi, gestione stock, protezioni API e test automatici.
+**Vudoo Base Connector** è il progetto Node.js alla base di **Vudoo Product Manager V2**, l'app desktop Electron/React per consultare e preparare i cataloghi prodotto Vudoo e importarli in **Base.com**. Comprende normalizzazione e validazione dei dati, modifiche locali ai prodotti, aggiornamenti selettivi, gestione stock, protezioni API e test automatici. La CLI rimane disponibile per le operazioni supportate.
+
+L'integrazione operativa dei prodotti passa da Base.com: le precedenti integrazioni dirette con i marketplace non fanno più parte del progetto. La sezione **Ordini (Beta)** permette di consultare in sola lettura un singolo ordine Base.com tramite ID.
 
 ## ⚙️ Requisiti Principali
 
@@ -10,8 +12,9 @@ Per eseguire e sviluppare il progetto sono necessari:
 
 * **Node.js**: versione 22 o superiore;
 * **npm**: gestore di pacchetti incluso con Node.js;
-* un token API valido per **Base.com**;
-* il feed XML Vudoo disponibile localmente come `VUDOO.xml`.
+* un token API valido per **Base.com** per le funzioni che ne leggono o modificano i dati;
+* accesso al feed remoto Vudoo per caricare i cataloghi;
+* i file di configurazione locale necessari ai mapping, quando richiesti dal flusso usato.
 
 ## 📥 Installazione
 
@@ -35,11 +38,11 @@ Su macOS o Linux:
 cp .env.example .env
 ```
 
-Il file `.env.example` rimane versionato; il file `.env` è locale e non deve contenere credenziali destinate al repository.
+Il file `.env.example` rimane versionato; il file `.env` è locale e non deve contenere credenziali destinate al repository. Anche `config/` e `tools/legacy/` sono esclusi dal versionamento: una nuova copia del repository non li contiene e gli eventuali file locali necessari vanno predisposti separatamente. Non includere token o configurazioni riservate nei commit.
 
 ## ⚙️ Configurazione (`.env`)
 
-Prima di avviare lo script configura almeno `BASE_API_TOKEN`, `TEST_MODE` e `DRY_RUN`. Gli ID di inventory e warehouse possono essere indicati quando serve una selezione esplicita; in loro assenza il progetto applica le verifiche previste sul catalogo predefinito e sulle risorse associate.
+Prima di usare le funzioni Base.com configura `BASE_API_TOKEN` e verifica `TEST_MODE` e `DRY_RUN` in `.env`. Gli ID di inventory e warehouse possono essere indicati quando serve una selezione esplicita; in loro assenza il progetto applica le verifiche previste sul catalogo predefinito e sulle risorse associate. I mapping locali delle categorie e dei fornitori, quando necessari, si trovano in `config/` e non sono distribuiti dal repository.
 
 Per il dettaglio completo consulta la [Guida alla Configurazione](./docs/configurazione.md).
 
@@ -49,75 +52,78 @@ La CLI continua a usare `.env`. L'app Electron carica `.env` all'avvio e poi app
 
 ## 📂 Struttura Attuale delle Cartelle e dei Moduli
 
-Il progetto è organizzato in modo modulare: la CLI è l'entry point principale, la logica runtime è in `src/` e le utility del precedente flusso locale sono in `tools/legacy/`:
+Il progetto è organizzato in modo modulare: l'app desktop usa `electron/` e `renderer/`, la CLI resta in `cli.js` e la logica condivisa è in `src/`. La struttura seguente mostra le parti principali versionate:
 
 ```text
 vudoo-base-connector/
 ├── cli.js
 ├── check.js
+├── electron/
+│   ├── main.js
+│   ├── preload.cjs
+│   ├── productOverrides.js
+│   └── settingsManager.js
+├── renderer/
+│   └── src/
+│       ├── components/
+│       └── pages/
+│           ├── CatalogPage.jsx
+│           ├── OperationsPage.jsx
+│           ├── OrdersBetaPage.jsx
+│           └── ProblemsPage.jsx
 ├── src/
 │   ├── baseApi.js
-│   ├── categories.js
-│   ├── checker.js
-│   ├── config.js
-│   ├── converter.js
+│   ├── categoryNormalizer.js
 │   ├── importer.js
-│   ├── logger.js
-│   ├── manufacturers.js
-│   ├── operations.js
 │   ├── preflight.js
-│   ├── productor.js
 │   ├── products.js
-│   ├── vudooBaseFields.js
-│   ├── vudooImport.js
-│   └── vudooXml.js
-├── tools/
-│   └── legacy/
-│       ├── convert-json.js
-│       ├── import-json.js
-│       ├── productor-json.js
-│       ├── sync-json.js
-│       └── xml-to-json.js
+│   ├── marketplaces/base/localPreview.js
+│   └── orders/
+│       ├── baseOrderReader.js
+│       └── orderModel.js
 ├── tests/
-│   ├── cli.test.js
-│   ├── integration-review.test.js
-│   └── read-only-base.mjs
 ├── docs/
 ├── .env.example
 ├── package.json
 └── README.md
 ```
 
+Le directory locali `config/` e `tools/legacy/`, se presenti, sono ignorate da Git e non compaiono nella struttura versionata.
+
 ## 🛠️ Ruolo dei Principali File
 
 ### 1. Entry point e orchestrazione
 
+* **`electron/main.js`** e **`electron/preload.cjs`**: avvio dell'app desktop e collegamento controllato tra interfaccia e core;
+* **`renderer/src/`**: interfaccia del Product Manager per catalogo, produttori, problemi, operazioni, diagnostica e Ordini (Beta);
 * **`cli.js`**: apre il menu interattivo eseguito da `npm start`;
 * **`check.js`**: verifica ambiente e configurazione;
-* **`tools/legacy/`**: conserva conversione, import, sync e produttori basati sui file locali, separati dal normale flusso remoto.
+* **`tools/legacy/`**, se presente localmente: raccoglie le utility del precedente flusso basato su file; non è più versionata.
 
 ### 2. Moduli applicativi (`src/`)
 
 * **`src/baseApi.js`**: chiamate Base.com, inventory, gruppi prezzo, warehouse, ricerca SKU, CREATE/UPDATE, rate limiting ed esiti incerti;
-* **`src/products.js`**: lettura JSON, normalizzazione, validazione, deduplicazione e payload prodotti;
+* **`src/products.js`**: normalizzazione, validazione, deduplicazione e payload prodotti;
 * **`src/preflight.js`**: controlli preliminari prima dell'importazione;
 * **`src/categories.js`** e **`src/manufacturers.js`**: associazione e creazione controllata di categorie e produttori;
-* **`src/categoryNormalizer.js`**: risoluzione del supplier da `channel.title` e mapping categoria sorgente → canonical → Base path;
+* **`src/categoryNormalizer.js`**: risoluzione del supplier e mapping categoria sorgente → canonical → Base path;
 * **`src/converter.js`**: parsing XML e composizione del titolo condivisi;
 * **`src/vudooXml.js`** e **`src/vudooImport.js`**: fetch, parsing, normalizzazione e orchestrazione del catalogo remoto Vudoo;
+* **`src/marketplaces/base/localPreview.js`**: anteprima e controlli locali dei dati destinati a Base.com;
+* **`src/orders/`**: lettura e normalizzazione degli ordini Base.com per la pagina Ordini (Beta);
 * **`src/operations.js`**: operazioni condivise dalla CLI;
 * **`src/checker.js`**, **`src/config.js`** e **`src/logger.js`**: diagnostica, configurazione e log.
 
 ## 🔄 Flusso Vudoo remoto → Base.com
 
 ```text
-codiceAzienda inserito nella CLI
+Catalogo Vudoo caricato nel Product Manager o tramite CLI
     ↓
 GET ProductCatalog.ashx e parsing XML in memoria
     ↓
-Selezione locale facoltativa dei prodotti da importare
+Consultazione e selezione facoltativa dei prodotti
     ↓
-Normalizzazione e validazione prodotti
+Normalizzazione, validazione e override locali
     ↓
 Deduplicazione feed e ricerca SKU nell'inventory selezionato
     ↓
@@ -127,25 +133,26 @@ Preflight: configurazione, metadati, inventory, price group e warehouse
     ↓
 Confronto con Base.com
     ↓
-CREATE / UPDATE selettivo / SKIP
+CREATE / UPDATE selettivo / SKIP, secondo la modalità attiva
     ↓
 Report finale
 ```
 
 ### 🗂️ Categorie canoniche
 
-`config/canonical-categories.json` definisce i percorsi Base delle categorie canoniche. I file in `config/suppliers/` associano i titoli pubblici dei feed ai profili fornitore e traducono le categorie sorgente in categorie canoniche. Un nuovo fornitore rilevato nel preflight riceve una bozza di configurazione da completare prima dell'import.
+Quando è presente nella configurazione locale, `config/canonical-categories.json` definisce i percorsi Base delle categorie canoniche. I file in `config/suppliers/` associano i titoli pubblici dei feed ai profili fornitore e traducono le categorie sorgente in categorie canoniche. Questa directory non è più versionata: occorre predisporre i mapping necessari prima di usarli.
 
-Il preflight elenca tutte le categorie sorgente reali e i relativi conteggi. I prodotti senza categoria, inclusa `No name > No name`, sono sempre esclusi; quelli con `g:id` vengono registrati in `reports/no_name_products.json`, mentre quelli senza `g:id` sono conteggiati separatamente senza bloccare l'import. Per le categorie reali senza mapping, `UNMAPPED_CATEGORY_POLICY=block` mantiene il blocco sicuro predefinito, mentre `skip` importa soltanto i prodotti classificati e riporta separatamente quelli esclusi. Quando il mapping è disponibile, i livelli Base mancanti vengono creati dalla logica gerarchica esistente. Le associazioni marketplace continuano a essere configurate direttamente in Base.com.
+Il preflight elenca tutte le categorie sorgente reali e i relativi conteggi. I prodotti senza categoria, inclusa `No name > No name`, sono esclusi; quelli con `g:id` vengono registrati in `reports/no_name_products.json`, mentre quelli senza `g:id` sono conteggiati separatamente senza bloccare l'import. Per le categorie reali senza mapping, `UNMAPPED_CATEGORY_POLICY=block` mantiene il blocco sicuro predefinito, mentre `skip` importa soltanto i prodotti classificati e riporta separatamente quelli esclusi. Quando il mapping è disponibile, i livelli Base mancanti vengono creati dalla logica gerarchica esistente. Le associazioni ai marketplace vengono gestite in Base.com.
 
 Consulta [Categorie canoniche](./docs/category-mappings.md) per aggiungere supplier e mapping senza usare o salvare il codice azienda.
 
 ### 🛡️ Regole di Sicurezza, Validazione e Ottimizzazione
 
 * **Aggiornamenti mirati:** vengono inviati soltanto i campi realmente cambiati;
+* **Override locali:** le modifiche nel Product Manager restano separate dai dati originali Vudoo e vengono verificate prima dell'importazione;
 * **SKU ambigui:** più prodotti Base.com con lo stesso SKU bloccano l'operazione senza scegliere arbitrariamente;
 * **Deduplicazione:** i duplicati equivalenti nel feed vengono elaborati una sola volta; dati discordanti vengono segnalati;
-* **Protezione `DRY_RUN`:** tutte le scritture Base.com sono bloccate centralmente;
+* **Protezione `DRY_RUN`:** le scritture Base.com sono bloccate centralmente in modalità simulazione;
 * **Sanitizzazione Unicode:** i testi destinati a Base.com vengono privati dei caratteri non-BMP incompatibili, preservando i normali caratteri Unicode supportati;
 * **Rate limiting adattivo:** le richieste condividono una finestra mobile e rallentano quando si avvicinano alle soglie configurate;
 * **Retry controllati:** soltanto le letture con errori temporanei vengono ritentate in modo limitato;
@@ -169,25 +176,26 @@ npm start
 
 Il comando apre il menu interattivo con verifica ambiente, preflight del catalogo remoto, sincronizzazione produttori, importazione completa o selettiva e test automatici. La CLI chiede il codice azienda e mostra i valori di fetch configurati, senza chiedere né modificare limite o timeout a ogni esecuzione. Il runtime legge `.env`; `.env.example` è solo un template versionato da copiare, non viene letto automaticamente. `VUDOO_RESULTS_LIMIT` usa il default applicativo `3000` e `VUDOO_TIMEOUT_MS` usa `90000` ms: sono valori operativi, non garantiscono la completezza del catalogo. L'import completo elabora tutti i prodotti ricevuti; quello selettivo permette di scegliere localmente per categoria, codice o parola chiave, consultare l'intera selezione a pagine e rimuovere prodotti per `g:id` o `g:sku`. In caso di timeout l'operazione si ferma prima del preflight Base.com. Consulta [Modalità CLI](./docs/cli-modalita.md) per i dettagli.
 
+Per avviare l'app desktop in sviluppo usa `npm run dev`; `npm run build` prepara il renderer e `npm run dist:win` crea il pacchetto portable Windows, se sono disponibili anche i file di configurazione locali richiesti dal packaging.
+
 ## 📦 Elenco Aggiornato dei Comandi npm
 
 * `npm start`: apre la CLI interattiva;
+* `npm run dev`: avvia renderer ed Electron in sviluppo;
+* `npm run build`: genera il renderer;
+* `npm run dist:win`: prepara il pacchetto portable Windows;
 * `npm run check`: verifica ambiente e configurazione;
-* `npm run import`: utility legacy per importare `real_products.json`;
-* `npm run convert`: utility legacy che converte `VUDOO.xml` in `real_products.json`;
-* `npm run productor`: utility legacy per sincronizzare i produttori dal JSON locale;
-* `npm run sync`: utility legacy XML → JSON → preflight → import;
 * `npm test`: esegue la suite automatica.
 
-Il comando `productor` resta separato dal sync perché l'importazione principale gestisce già i produttori mancanti.
+Nel `package.json` rimangono i comandi storici `import`, `convert`, `productor` e `sync`, che puntano a `tools/legacy/`. Poiché la directory non è più versionata, questi comandi non sono disponibili in una nuova copia del repository senza le utility locali.
 
 ## 🔍 Spiegazione di `DRY_RUN`
 
-Con `DRY_RUN=true` il progetto esegue letture, normalizzazione, confronti e costruzione dei payload, ma blocca CREATE e UPDATE verso Base.com. Solo le utility legacy di conversione possono rigenerare localmente `real_products.json`.
+Con `DRY_RUN=true` il progetto esegue letture, normalizzazione, confronti e costruzione dei payload, ma blocca CREATE e UPDATE verso Base.com. Nell'app desktop la modalità attiva è mostrata come **Simulazione** o **Reale**; verifica sempre questa indicazione prima di avviare un'importazione.
 
 ## 🧪 Spiegazione di `TEST_MODE`
 
-Con `TEST_MODE=true` viene selezionato un solo prodotto. Con `TEST_MODE=false` vengono elaborati tutti i prodotti deduplicati del catalogo remoto.
+Con `TEST_MODE=true` viene selezionato un solo prodotto. Con `TEST_MODE=false` vengono elaborati tutti i prodotti deduplicati del catalogo remoto nel flusso interessato.
 
 ## 🧪 Test Automatici
 
@@ -197,7 +205,7 @@ Esegui la suite configurata con:
 npm test
 ```
 
-La suite corrente comprende **300 test** dedicati a CLI, parsing, normalizzazione, stock, payload, CREATE/UPDATE/SKIP, DRY_RUN, categorie, produttori, duplicati, Unicode, rate limiting ed esiti incerti.
+La suite corrente copre CLI, parsing, normalizzazione, stock, payload, CREATE/UPDATE/SKIP, DRY_RUN, categorie, produttori, catalogo e interfaccia desktop, oltre alla lettura degli ordini Base.com in Beta. Il numero dei test può variare con lo sviluppo.
 
 ## 📚 Link alla Documentazione Secondaria
 
@@ -209,11 +217,12 @@ La suite corrente comprende **300 test** dedicati a CLI, parsing, normalizzazion
 * [Roadmap](./docs/ROADMAP.md)
 * [Workflow Git](./docs/WORKFLOW.md)
 * [Commit Guidelines](./docs/COMMIT_GUIDELINES.md)
-* [Release Notes v1.1.0](./docs/RELEASE_NOTES_v1.1.0.md)
+
+Alcuni documenti descrivono fasi precedenti del progetto e vanno letti tenendo conto dell'attuale Product Manager V2.
 
 ## 🚧 Evoluzione Prevista
 
-L'evoluzione principale prevista è la sostituzione del passaggio manuale tramite XML con un'integrazione diretta ai dati o alle API Vudoo, mantenendo la normalizzazione e le protezioni Base.com già presenti.
+Il Product Manager V2 usa già il feed remoto Vudoo per il catalogo prodotti e Base.com per le operazioni supportate. L'evoluzione riguarda il consolidamento dei flussi desktop e l'estensione graduale di **Ordini (Beta)**, oggi limitato alla consultazione in sola lettura di un ordine Base.com per ID. Ulteriori funzioni sugli ordini richiedono verifiche specifiche prima di essere considerate disponibili.
 
 ## 👥 Autori e contributi
 
@@ -223,8 +232,8 @@ Lo sviluppo è stato portato avanti con il supporto e i contributi del team di s
 
 ### Contributors
 
-- **Davide Baragli** — sviluppo e miglioramenti tecnici
-- **Leonardo Roschi** — sviluppo e attività di supporto
-- **Ian Cavini** — sviluppo, documentazione e contributi al progetto
-- **Hudson (WoodTrue)** — sviluppo e attività di manutenzione
-- **Grecia** — sviluppo, test e attività di supporto
+- **Davide Baragli**
+- **Leonardo Roschi**
+- **Ian Cavini**
+- **Hudson (WoodTrue)**
+- **Grecia**
