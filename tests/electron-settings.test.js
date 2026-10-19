@@ -28,6 +28,16 @@ test('Electron settings: a missing file uses backend defaults without creating a
   });
 });
 
+test('Modalità operativa: real di default, preferenza simulation persistita e reset', async () => {
+  assert.equal(readEnvironmentSettings({}).settings.dryRun, false);
+  await withSettingsFile(async filePath => {
+    await saveSettings(filePath, { dryRun: true });
+    assert.equal(getEffectiveSettings(DEFAULT_SETTINGS, (await loadSettings(filePath)).settings).dryRun, true);
+    await resetSettings(filePath);
+    assert.equal(getEffectiveSettings(DEFAULT_SETTINGS, (await loadSettings(filePath)).settings).dryRun, false);
+  });
+});
+
 test('Electron settings: typed booleans and numbers survive save, reload, and atomic replacement', async () => {
   await withSettingsFile(async (filePath, directory) => {
     const first = { dryRun: false, testMode: false, baseApiRequestsPerMinute: 95 };
@@ -111,7 +121,7 @@ test('Electron settings: invalid local environment values use explicit defaults 
   });
   assert.equal(result.settings.vudooResultsLimit, 3000);
   assert.equal(result.settings.baseApiReadAttempts, 3);
-  assert.equal(result.settings.dryRun, true);
+  assert.equal(result.settings.dryRun, false);
   assert.deepEqual(result.warnings, ['DRY_RUN', 'VUDOO_RESULTS_LIMIT', 'BASE_API_READ_ATTEMPTS']);
 });
 
@@ -143,6 +153,14 @@ test('Electron settings: user settings override .env and apply before core confi
   assert.equal(module.namespace.dryRun, 'false');
   assert.equal(module.namespace.testMode, 'false');
   assert.equal(module.namespace.getBaseApiRequestsPerMinute(), 98);
+});
+
+test('Electron bootstrap imports the catalog projection only after applying saved runtime settings', () => {
+  const main = readFileSync(new URL('../electron/main.js', import.meta.url), 'utf8');
+  const applyAt = main.indexOf('applySettingsToEnvironment(activeSettings)');
+  const projectionAt = main.indexOf("await import('./catalogProjection.js')");
+  assert.ok(applyAt >= 0 && projectionAt > applyAt);
+  assert.doesNotMatch(main, /import\s*\{\s*projectCatalogForOperator\s*\}\s*from/);
 });
 
 test('Electron settings: reset removes overrides and restores original .env-derived values', async () => {
@@ -187,11 +205,13 @@ test('Electron settings: preload exposes only specific settings channels', async
     },
   });
   await exposed.getSettings();
+  await exposed.setOperatingMode('simulation');
   await exposed.saveSettings({ dryRun: true });
   await exposed.resetSettings();
   await exposed.restartApp();
   assert.deepEqual(invocations, [
     ['settings:get'],
+    ['app:set-operating-mode', 'simulation'],
     ['settings:save', { dryRun: true }],
     ['settings:reset'],
     ['app:restart'],
@@ -203,9 +223,9 @@ test('Electron settings: preload exposes only specific settings channels', async
 
 test('Electron settings: startup applies saved values before dynamic core imports and renderer has no filesystem access', () => {
   const main = readFileSync(new URL('../electron/main.js', import.meta.url), 'utf8');
-  assert.ok(main.indexOf('loadEnvFile(') < main.indexOf('await loadSettings('));
-  assert.ok(main.indexOf('await loadSettings(') < main.indexOf('applySettingsToEnvironment(savedSettings)'));
-  assert.ok(main.indexOf('applySettingsToEnvironment(savedSettings)') < main.indexOf('await import("../src/checker.js")'));
+  assert.ok(main.indexOf('loadLocalEnvironment(') < main.indexOf('await loadSettings('));
+  assert.ok(main.indexOf('await loadSettings(') < main.indexOf('applySettingsToEnvironment(activeSettings)'));
+  assert.ok(main.indexOf('applySettingsToEnvironment(activeSettings)') < main.indexOf('await import("../src/checker.js")'));
   const renderer = readFileSync(new URL('../renderer/src/SettingsPanel.jsx', import.meta.url), 'utf8');
   assert.doesNotMatch(renderer, /node:fs|node:path|process\.env|localStorage|ipcRenderer/);
 });

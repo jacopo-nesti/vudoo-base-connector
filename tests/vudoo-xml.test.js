@@ -279,11 +279,12 @@ for (const [name, expected] of [
   });
 }
 
-test('Vudoo XML: descrizione tecnicamente sanitizzata e sola immagine principale', () => {
+test('Vudoo XML: descrizione sanitizzata e tutte le immagini disponibili entro il limite Base', () => {
   const product = full();
   const payload = buildBasePayload(product, config);
   assert.equal(payload.text_fields.description, 'Descrizione è Unicode ✨');
-  assert.deepEqual(payload.images, { 0: 'url:https://example.com/main.jpg' });
+  assert.deepEqual(payload.images, { 0: 'url:https://example.com/main.jpg',
+    1: 'url:https://example.com/extra1.jpg', 2: 'url:https://example.com/extra2.jpg' });
   assert.equal(product.source.additional_image_link.length, 2);
   assert.equal(payload.parent_id, undefined);
 });
@@ -358,7 +359,8 @@ for (const invalid of [
 test('Vudoo XML: UPDATE dei nuovi campi selettivo, idempotente e conserva Parameters esterni', () => {
   const product = full();
   const payload = buildBasePayload(product, config);
-  const existing = { ...payload, images: { 1: product.image_link }, text_fields: { ...payload.text_fields, features: { ...payload.text_fields.features, Esterno: 'conservare' } } };
+  const existing = { ...payload, images: { 1: product.image_link, 2: product.additional_image_link[0],
+    3: product.additional_image_link[1] }, text_fields: { ...payload.text_fields, features: { ...payload.text_fields.features, Esterno: 'conservare' } } };
   assert.equal(buildBaseUpdatePayload(product, existing, config), null);
   const changed = { ...product, tax_rate: 22, features: { ...product.features, MPN: 'NEW-MPN' } };
   const update = buildBaseUpdatePayload(changed, existing, config);

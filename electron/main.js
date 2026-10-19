@@ -1,27 +1,43 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadEnvFile } from "node:process";
+import { loadLocalEnvironment, resolveEnvironmentFile } from './localEnv.js';
+import { preparePackagedConfiguration } from './packagedConfiguration.js';
 import {
   SETTINGS_FILE_NAME, applySettingsToEnvironment, getEffectiveSettings,
   loadSettings, readEnvironmentSettings, resetSettings, saveSettings,
 } from "./settingsManager.js";
 import { createWriteGuard } from "./writeGuard.js";
-import { toCatalogProductDto } from "./catalogDto.js";
 import {
-  PRODUCT_OVERRIDES_FILE_NAME, loadProductOverrides, saveProductOverride,
+  PRODUCT_OVERRIDES_FILE_NAME, loadProductOverrides, saveProductOverride, saveProductFieldPatch, saveBulkProductField, saveBulkProductTags,
 } from './productOverrides.js';
-import { getProductOverride, effectiveSourceProduct } from './effectiveProduct.js';
+import { getProductOverride } from './effectiveProduct.js';
+import { basePayloadPreview, assertBaseLocalSendable } from '../src/marketplaces/base/localPreview.js';
+import { validateBulkBaseInput } from '../src/productSchema.js';
+import { MANUFACTURERS_DB_FILE_NAME, openManufacturerDirectory, registerLoadedCatalog } from './manufacturerDirectory.js';
+import { createManufacturerInventoryService } from './manufacturerInventory.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-loadEnvFile(path.join(__dirname, "../.env"));
 
 async function bootstrap() {
   await app.whenReady();
+  const userDataPath = app.getPath('userData');
+  const environmentFile = resolveEnvironmentFile({
+    packaged: app.isPackaged,
+    projectRoot: path.join(__dirname, '..'),
+    executableDir: process.env.PORTABLE_EXECUTABLE_DIR,
+    executablePath: process.execPath,
+  });
+  loadLocalEnvironment(environmentFile, { optional: app.isPackaged });
+  if (app.isPackaged) {
+    const localPaths = await preparePackagedConfiguration(process.resourcesPath, userDataPath);
+    process.env.VUDOO_CONFIG_ROOT = localPaths.configRoot;
+    process.env.VUDOO_REPORT_ROOT = localPaths.reportRoot;
+  }
 
   const settingsPath = path.join(
-    app.getPath("userData"),
+    userDataPath,
     SETTINGS_FILE_NAME
   );
 
@@ -41,18 +57,26 @@ async function bootstrap() {
     savedSettings
   );
 
-  applySettingsToEnvironment(savedSettings);
+  applySettingsToEnvironment(activeSettings);
+
+  // This module imports core config transitively; wait for saved settings.
+  const { projectCatalogForOperator } = await import('./catalogProjection.js');
 
   const { runEnvironmentCheck } =
     await import("../src/checker.js");
 
   const { fetchParsedVudooCatalog } =
     await import("../src/vudooImport.js");
+  const { loadCategoryMappings } = await import('../src/categoryNormalizer.js');
 
   const { BULK_LOOKUP_THRESHOLD } = await import("../src/importer.js");
   const { BASE_PRODUCT_DETAILS_CHUNK_SIZE } = await import("../src/baseApi.js");
+  const { callBase } = await import('../src/baseApi.js');
+  const { readBaseOrder, classifyOrderError } = await import('../src/orders/baseOrderReader.js');
+  const { createInventoryTagService } = await import('../src/inventoryTags.js');
+  const baseConfig = await import('../src/config.js');
 
-  const { dryRun, testMode, getBaseApiRequestsPerMinute } =
+  const { setDryRunMode, testMode, token, getBaseApiRequestsPerMinute } =
     await import("../src/config.js");
 
   const { redactToken } =
@@ -69,9 +93,56 @@ async function bootstrap() {
 
   let activeCatalog = null;
   let activeCompanyCode = null;
+  let activeCatalogLoadedAt = null;
   let activeOverrides = {};
+  let activeMappings = null;
+  let activeInventoryStatus = null;
   const productOverridesPath = path.join(app.getPath('userData'), PRODUCT_OVERRIDES_FILE_NAME);
+  const manufacturersPath = path.join(app.getPath('userData'), MANUFACTURERS_DB_FILE_NAME);
+  let manufacturerDirectory = null;
+  function getManufacturerDirectory() {
+    manufacturerDirectory ??= openManufacturerDirectory(manufacturersPath);
+    return manufacturerDirectory;
+  }
+  app.on('before-quit', () => manufacturerDirectory?.close());
   const writeGuard = createWriteGuard();
+  let inventoryService = null;
+  function getInventoryService() {
+    inventoryService ??= createManufacturerInventoryService({
+      directory: getManufacturerDirectory(),
+      getInventories: () => callBase('getInventories'),
+      addInventory: parameters => writeGuard.run(() => callBase('addInventory', parameters)),
+      configuredInventoryId: baseConfig.inventoryId,
+      isSimulation: () => baseConfig.dryRun === 'true',
+    });
+    return inventoryService;
+  }
+  async function ensureActiveInventory(manufacturer, selectedInventoryId = null) {
+    if (!manufacturer) {
+      activeInventoryStatus = { status: 'MISSING', inventoryId: null, inventory: null,
+        message: 'Salva il produttore locale per associare un Inventory Base.com.' };
+    } else if (!baseConfig.token) {
+      activeInventoryStatus = { status: 'ERROR', inventoryId: null, inventory: null,
+        code: 'BASE_NOT_CONFIGURED', message: 'Credenziali Base.com non configurate.' };
+    } else {
+      try {
+        activeInventoryStatus = await getInventoryService().ensureInventoryForManufacturer(manufacturer,
+          { selectedInventoryId });
+      } catch (error) {
+        activeInventoryStatus = { status: 'ERROR', inventoryId: null, inventory: null,
+          code: error?.code ?? 'INVENTORY_CHECK_FAILED', message: redactToken(error?.message ?? error) };
+      }
+    }
+    if (activeCatalog) activeCatalog.baseInventoryId = activeInventoryStatus.inventoryId;
+    return activeInventoryStatus;
+  }
+  async function refreshActiveInventory() {
+    if (!activeCatalog || !activeCompanyCode) return;
+    let manufacturer = null;
+    try { manufacturer = getManufacturerDirectory().getByCode(activeCompanyCode); }
+    catch { /* Catalog remains usable with the configured Inventory fallback. */ }
+    await ensureActiveInventory(manufacturer);
+  }
 
   async function runWriteOperation(operation) {
     try {
@@ -83,17 +154,14 @@ async function bootstrap() {
 
   function settingsResponse() {
     const settings = getEffectiveSettings(baseSettings, savedSettings);
-    const displayedActiveSettings = { ...activeSettings };
-    if (environmentWarnings.includes('DRY_RUN') && !Object.hasOwn(startupSavedSettings, 'dryRun')) {
-      displayedActiveSettings.dryRun = null;
-    }
     return {
       ok: true,
       settings,
-      activeSettings: displayedActiveSettings,
+      activeSettings: { ...activeSettings },
       hasOverrides: Object.keys(savedSettings).length > 0,
-      restartRequired: Object.keys(settings).some(key => settings[key] !== activeSettings[key]) ||
-        (environmentWarnings.length > 0 && JSON.stringify(savedSettings) !== JSON.stringify(startupSavedSettings)),
+      restartRequired: Object.keys(settings).some(key => key !== 'dryRun' && settings[key] !== activeSettings[key]) ||
+        (environmentWarnings.some(key => key !== 'DRY_RUN') &&
+          JSON.stringify(savedSettings) !== JSON.stringify(startupSavedSettings)),
       warning: settingsWarning,
       environmentWarnings,
     };
@@ -103,7 +171,7 @@ async function bootstrap() {
     return {
       ok: false,
       code: error?.code === 'invalidValue' || error?.code === 'invalidSettings' ||
-        error?.code === 'unsupportedSetting' ? error.code : 'storageError',
+        error?.code === 'unsupportedSetting' || error?.code === 'importInProgress' ? error.code : 'storageError',
       field: error?.field ?? null,
     };
   }
@@ -127,23 +195,73 @@ async function bootstrap() {
     }
   }
 
-  function startDesktopApp() {
+  async function startDesktopApp() {
+    ipcMain.handle('orders:get', async (_event, orderId) => {
+      try { return { ok: true, order: await readBaseOrder(orderId) }; }
+      catch (error) { return { ok: false, code: classifyOrderError(error) }; }
+    });
+    ipcMain.handle('manufacturers:list', () => {
+      try { return { ok: true, manufacturers: getManufacturerDirectory().list() }; }
+      catch { return { ok: false, code: 'databaseUnavailable', manufacturers: [] }; }
+    });
+    ipcMain.handle('manufacturers:search', (_event, query) => {
+      try { return { ok: true, results: getManufacturerDirectory().search(query) }; }
+      catch { return { ok: false, code: 'databaseUnavailable', results: [] }; }
+    });
+    ipcMain.handle('manufacturers:save', async (_event, input) => {
+      if (!activeCatalog || input?.catalogCode !== activeCompanyCode) {
+        return { ok: false, code: 'catalogNotLoaded' };
+      }
+      try {
+        const directory = getManufacturerDirectory();
+        const saved = directory.save(input.catalogCode, input.name);
+        saved.manufacturer = directory.recordLoadedCatalog(input.catalogCode, activeCatalog.products.length,
+          activeCatalogLoadedAt ?? new Date().toISOString());
+        return { ok: true, ...saved, inventoryStatus: await ensureActiveInventory(saved.manufacturer) };
+      }
+      catch (error) { return { ok: false, code: error?.code === 'invalidValue' ? error.code : 'databaseUnavailable', field: error?.field ?? null }; }
+    });
+    ipcMain.handle('catalog:inventory-select', async (_event, inventoryId) => {
+      if (!activeCatalog || !activeCompanyCode || !Number.isSafeInteger(inventoryId) || inventoryId <= 0) {
+        return { ok: false, code: 'invalidValue' };
+      }
+      const manufacturer = getManufacturerDirectory().getByCode(activeCompanyCode);
+      if (!manufacturer || activeInventoryStatus?.status !== 'AMBIGUOUS') return { ok: false, code: 'selectionUnavailable' };
+      const result = await ensureActiveInventory(manufacturer, inventoryId);
+      return result.status === 'ERROR' ? { ok: false, code: result.code, inventoryStatus: result }
+        : { ok: true, inventoryStatus: result };
+    });
+    ipcMain.handle('catalog:inventory-retry', async () => {
+      if (!activeCatalog || !activeCompanyCode) return { ok: false, code: 'catalogNotLoaded' };
+      const manufacturer = getManufacturerDirectory().getByCode(activeCompanyCode);
+      return { ok: true, inventoryStatus: await ensureActiveInventory(manufacturer) };
+    });
     ipcMain.handle("settings:get", () => settingsResponse());
     ipcMain.handle("settings:save", async (_event, input) => {
+      if (writeGuard.isBusy()) return { ok: false, code: 'importInProgress' };
       try {
-        savedSettings = await saveSettings(settingsPath, input);
-        settingsWarning = null;
-        return settingsResponse();
+        return await writeGuard.run(async () => {
+          savedSettings = await saveSettings(settingsPath, input);
+          setDryRunMode(getEffectiveSettings(baseSettings, savedSettings).dryRun);
+          activeSettings.dryRun = savedSettings.dryRun ?? baseSettings.dryRun;
+          settingsWarning = null;
+          return settingsResponse();
+        });
       } catch (error) {
         return settingsFailure(error);
       }
     });
     ipcMain.handle("settings:reset", async () => {
+      if (writeGuard.isBusy()) return { ok: false, code: 'importInProgress' };
       try {
-        await resetSettings(settingsPath);
-        savedSettings = {};
-        settingsWarning = null;
-        return settingsResponse();
+        return await writeGuard.run(async () => {
+          await resetSettings(settingsPath);
+          savedSettings = {};
+          setDryRunMode(baseSettings.dryRun);
+          activeSettings.dryRun = baseSettings.dryRun;
+          settingsWarning = null;
+          return settingsResponse();
+        });
       } catch (error) {
         return settingsFailure(error);
       }
@@ -159,10 +277,14 @@ async function bootstrap() {
     });
 
     ipcMain.handle("environment:check", async () => {
+      loadLocalEnvironment(environmentFile, { optional: app.isPackaged });
+      const { refreshBaseToken } = await import('../src/config.js');
+      refreshBaseToken();
       return await runEnvironmentCheck();
     });
     ipcMain.handle("app:runtime-mode", () => ({
-      dryRun: dryRun === "true" ? true : dryRun === "false" ? false : null,
+      baseConfigured: Boolean(token),
+      dryRun: activeSettings.dryRun,
       testMode: testMode === "true" ? true : testMode === "false" ? false : null,
       baseApiRequestsPerMinute: getBaseApiRequestsPerMinute(),
       importReadStrategy: {
@@ -170,6 +292,22 @@ async function bootstrap() {
         detailsChunkSize: BASE_PRODUCT_DETAILS_CHUNK_SIZE,
       },
     }));
+    ipcMain.handle("app:set-operating-mode", async (_event, mode) => {
+      if (mode !== 'real' && mode !== 'simulation') return { ok: false, code: 'invalidValue' };
+      if (writeGuard.isBusy()) return { ok: false, code: 'importInProgress' };
+      try {
+        return await writeGuard.run(async () => {
+          const nextDryRun = mode === 'simulation';
+          savedSettings = await saveSettings(settingsPath, { ...savedSettings, dryRun: nextDryRun });
+          setDryRunMode(nextDryRun);
+          activeSettings.dryRun = nextDryRun;
+          settingsWarning = null;
+          return { ok: true, mode, dryRun: nextDryRun };
+        });
+      } catch (error) {
+        return settingsFailure(error);
+      }
+    });
     ipcMain.handle("app:ping", () => {
       return "pong";
     });
@@ -183,21 +321,115 @@ async function bootstrap() {
       const storedOverrides = await loadProductOverrides(productOverridesPath);
       activeCatalog = null;
       activeCompanyCode = null;
+      activeCatalogLoadedAt = null;
+      activeInventoryStatus = null;
       const startedAt = Date.now();
       activeCatalog = await fetchParsedVudooCatalog(normalizedCompanyCode);
       activeCompanyCode = normalizedCompanyCode;
       activeOverrides = storedOverrides;
+      let mappingError = null;
+      try { activeMappings = await loadCategoryMappings(); }
+      catch (error) {
+        activeMappings = { canonical: new Map(), suppliers: new Map(), supplierByTitle: new Map() };
+        mappingError = redactToken(error.message);
+      }
+      const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode);
 
-      const productsForRenderer = activeCatalog.products.map(product =>
-        toCatalogProductDto(effectiveSourceProduct(product,
-          product?.id ? getProductOverride(activeOverrides, activeCompanyCode, product.id) : {})));
+      let directoryResult;
+      activeCatalogLoadedAt = new Date().toISOString();
+      try { directoryResult = registerLoadedCatalog(getManufacturerDirectory(), normalizedCompanyCode,
+        activeCatalog.channelTitle, activeCatalog.products.length, activeCatalogLoadedAt); }
+      catch { directoryResult = { status: 'unavailable', manufacturer: null }; }
+      const inventoryStatus = directoryResult.status === 'unavailable'
+        ? { status: 'ERROR', inventoryId: null, code: 'DATABASE_UNAVAILABLE', message: 'Anagrafica locale non disponibile.' }
+        : await ensureActiveInventory(directoryResult.manufacturer);
 
       return {
         channelTitle: activeCatalog.channelTitle,
+        manufacturerName: directoryResult.manufacturer?.name ?? null,
+        manufacturerDirectoryStatus: directoryResult.status,
+        inventoryStatus,
         totalProducts: activeCatalog.products.length,
         durationMs: Math.max(0, Date.now() - startedAt),
-        products: productsForRenderer,
+        products: projection.rows,
+        quality: projection.quality,
+        mappingError,
+        canonicalOptions: [...activeMappings.canonical.keys()].sort(),
       };
+    });
+
+    function oneProductResponse(id) {
+      const matches = activeCatalog.products.filter(product => product.id === id);
+      if (!matches.length) throw new Error('Prodotto non presente nel catalogo attivo.');
+      const source = matches[0];
+      if (matches.some(product => JSON.stringify(product) !== JSON.stringify(source))) {
+        throw new Error('ID duplicato con dati supplier discordanti: correggere il feed prima di modificare.');
+      }
+      return { source, product: projectCatalogForOperator({ channelTitle: activeCatalog.channelTitle, products: [source] },
+        activeMappings, activeOverrides, activeCompanyCode).rows[0] };
+    }
+
+    ipcMain.handle('catalog:save-fields', async (_event, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          if (!activeCatalog || !activeCompanyCode || !input || typeof input.id !== 'string') throw new Error('Caricare prima un catalogo Vudoo.');
+          const { source, product } = oneProductResponse(input.id);
+          if (input.scope === 'manual' && Object.hasOwn(input.changes ?? {}, 'canonical_category')) {
+            if (!activeMappings.canonical.has(input.changes.canonical_category) || !product.provenance.canonical_category.canonical) {
+              throw new Error('Categoria canonica non disponibile: associare prima la categoria supplier in config/suppliers.');
+            }
+          }
+          activeOverrides = await saveProductFieldPatch(productOverridesPath, activeOverrides,
+            activeCompanyCode, source, input);
+          return { ok: true, product: oneProductResponse(input.id).product };
+        });
+      } catch (error) { return { ok: false, error: redactToken(error.message) }; }
+    });
+
+    ipcMain.handle('catalog:bulk-edit', async (_event, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          if (!activeCatalog || !activeCompanyCode || !input || !Array.isArray(input.ids) || !input.ids.length ||
+              input.ids.length > 5000 || new Set(input.ids).size !== input.ids.length) {
+            throw new Error('Selezionare prodotti univoci nel catalogo attivo.');
+          }
+          if (input.scope !== 'base') throw new Error('La modifica massiva è disponibile solo per override Base.com.');
+          const selected = input.ids.map(id => oneProductResponse(id));
+          let changedCount = selected.length;
+          if (input.field === 'tags') {
+            const result = await saveBulkProductTags(productOverridesPath, activeOverrides, activeCompanyCode,
+              selected.map(item => item.source), input);
+            activeOverrides = result.overrides;
+            changedCount = result.changedCount;
+          } else {
+            const value = validateBulkBaseInput(input.field, input.value);
+            activeOverrides = await saveBulkProductField(productOverridesPath, activeOverrides, activeCompanyCode,
+              selected.map(item => item.source), { ...input, value });
+          }
+          return { ok: true, changedCount, products: input.ids.map(id => oneProductResponse(id).product) };
+        });
+      } catch (error) { return { ok: false, error: redactToken(error.message) }; }
+    });
+
+    ipcMain.handle('catalog:base-preview', async (_event, id) => {
+      try {
+        if (!activeCatalog || typeof id !== 'string') throw new Error('Caricare un prodotto prima dell’anteprima Base.');
+        const row = oneProductResponse(id).product;
+        const source = activeCatalog.products.find(product => product.id === id);
+        const { normalizeVudooProduct } = await import('../src/vudooXml.js');
+        const { effectiveProduct } = await import('./effectiveProduct.js');
+        const canonical = normalizeVudooProduct(source);
+        const fields = getProductOverride(activeOverrides, activeCompanyCode, id);
+        const effective = effectiveProduct(canonical, fields, 'base');
+        let tagPlan = null;
+        if (effective.tags != null) {
+          try {
+            tagPlan = await createInventoryTagService({ request: callBase,
+              isSimulation: () => baseConfig.dryRun === 'true' }).ensureInventoryTags(effective.tags);
+          } catch (error) { tagPlan = { error: redactToken(error.message) }; }
+        }
+        return { ok: true, product: row, preview: basePayloadPreview(effective, { tagPlan }), preflight: row.basePreflight };
+      } catch (error) { return { ok: false, error: redactToken(error.message) }; }
     });
 
     ipcMain.handle('catalog:save-product-override', async (_event, input) => {
@@ -218,8 +450,7 @@ async function bootstrap() {
         }
         activeOverrides = await saveProductOverride(productOverridesPath, activeOverrides,
           activeCompanyCode, source, { title: input.title, description: input.description });
-        const fields = getProductOverride(activeOverrides, activeCompanyCode, source.id);
-        return { ok: true, product: toCatalogProductDto(effectiveSourceProduct(source, fields)) };
+        return { ok: true, product: oneProductResponse(input.id).product };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
@@ -227,29 +458,39 @@ async function bootstrap() {
 
     ipcMain.handle("catalog:preflight-selected", async (_event, selectedIds) => {
       try {
+        await refreshActiveInventory();
         return { ok: true, result: await preflightSelectedCatalog(activeCatalog, selectedIds,
-          activeOverrides, activeCompanyCode) };
+          activeOverrides, activeCompanyCode), inventoryStatus: activeInventoryStatus };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
     });
 
     ipcMain.handle("catalog:import-selected", async (_event, selectedIds) => {
-      return runWriteOperation(() => importSelectedCatalog(activeCatalog, selectedIds,
-        activeOverrides, activeCompanyCode));
+      await refreshActiveInventory();
+      const response = await runWriteOperation(() => {
+        const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode);
+        assertBaseLocalSendable(projection.rows, selectedIds);
+        return importSelectedCatalog(activeCatalog, selectedIds, activeOverrides, activeCompanyCode);
+      });
+      return { ...response, inventoryStatus: activeInventoryStatus };
     });
 
     ipcMain.handle("catalog:preflight-all", async () => {
       try {
+        await refreshActiveInventory();
         return { ok: true, result: await preflightFullCatalog(activeCatalog,
-          activeOverrides, activeCompanyCode) };
+          activeOverrides, activeCompanyCode), inventoryStatus: activeInventoryStatus };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
     });
 
-    ipcMain.handle("catalog:import-all", async () =>
-      runWriteOperation(() => importFullCatalog(activeCatalog, activeOverrides, activeCompanyCode)));
+    ipcMain.handle("catalog:import-all", async () => {
+      await refreshActiveInventory();
+      const response = await runWriteOperation(() => importFullCatalog(activeCatalog, activeOverrides, activeCompanyCode));
+      return { ...response, inventoryStatus: activeInventoryStatus };
+    });
 
     ipcMain.handle("catalog:sync-manufacturers", async () =>
       runWriteOperation(() => syncFullCatalogManufacturers(activeCatalog)));
@@ -257,10 +498,12 @@ async function bootstrap() {
     createWindow();
   }
 
-  startDesktopApp();
+  await startDesktopApp();
 }
 
-void bootstrap().catch((error) => {
+// A single desktop process owns the local catalog and Base.com operations.
+if (!app.requestSingleInstanceLock()) app.quit();
+else void bootstrap().catch((error) => {
   console.error("Electron startup failed:", error);
   app.quit();
 });

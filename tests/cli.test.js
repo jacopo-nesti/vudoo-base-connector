@@ -126,7 +126,7 @@ test('CLI: diagnostica fallita conserva exit code 1 con risultati strutturati ne
   await withFixture(async directory => {
     const result = await runProcess(directory, 'cli.js', ['0', '6'], { BASE_API_TOKEN: '' });
     assert.equal(result.code, 1, result.output);
-    assert.match(result.output, /BASE_API_TOKEN.*Mancante o vuoto/);
+    assert.match(result.output, /BASE_API_TOKEN.*Non configurate/);
     assert.match(result.output, /DIAGNOSTICA FALLITA/);
   });
 });

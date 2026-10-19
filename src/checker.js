@@ -19,9 +19,9 @@ export async function runEnvironmentCheck() {
 
   // 1. Variabili d'ambiente
   if (token) {
-    report('BASE_API_TOKEN', true, '[TOKEN PRESENTE E NASCOSTO]');
+    report('BASE_API_TOKEN', true, 'Configurate');
   } else {
-    report('BASE_API_TOKEN', false, 'Mancante o vuoto nel file .env');
+    report('BASE_API_TOKEN', false, 'Non configurate');
   }
 
   const validTestMode = ['true', 'false'].includes(testMode);
@@ -37,7 +37,7 @@ export async function runEnvironmentCheck() {
   }
 
   try {
-    report('Categorie non mappate', true, getUnmappedCategoryPolicy().toUpperCase());
+    report('Categorie non mappate', true, `${getUnmappedCategoryPolicy().toUpperCase()} (legacy; Base.com usa warning)`);
   } catch (error) {
     report('Categorie non mappate', false, error.message);
   }

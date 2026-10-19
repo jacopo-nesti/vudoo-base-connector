@@ -1,8 +1,15 @@
-export const token = process.env.BASE_API_TOKEN?.trim();
+// Keep the Base client and diagnostics on the same process value after .env is reloaded.
+export let token = process.env.BASE_API_TOKEN?.trim();
+export function refreshBaseToken() { token = process.env.BASE_API_TOKEN?.trim(); return Boolean(token); }
 export const inventoryId = process.env.BASE_INVENTORY_ID?.trim();
 export const warehouseId = process.env.BASE_WAREHOUSE_ID?.trim();
 export const testMode = process.env.TEST_MODE ?? 'true';
-export const dryRun = process.env.DRY_RUN ?? 'true';
+export let dryRun = process.env.DRY_RUN ?? 'false';
+export function setDryRunMode(enabled) {
+  if (typeof enabled !== 'boolean') throw new TypeError('Modalità operativa non valida.');
+  dryRun = String(enabled);
+  process.env.DRY_RUN = dryRun;
+}
 
 export function parseUnmappedCategoryPolicy(raw) {
   if (raw == null || raw.trim() === '') return 'block';

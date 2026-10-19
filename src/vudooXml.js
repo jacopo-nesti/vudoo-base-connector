@@ -4,6 +4,9 @@ import { isMissingSourceCategory } from './categoryNormalizer.js';
 import { getVudooResultsLimit, getVudooTimeoutConfig } from './config.js';
 
 const endpoint = 'https://www.vudoo.org/ProductCatalog.ashx';
+// disponibili is applied by Vudoo before this feed is returned. Do not replace its
+// server-side decision with g:availability or g:quantity: those fields also report
+// positive stock for records excluded by disponibili=true (catalog 390296, 2026-10-07).
 const defaults = Object.freeze({ idCategoria: '', disponibili: true, lingua: 1, listino: 6 });
 
 export function buildVudooCatalogUrl(codiceAzienda, resultsLimit = getVudooResultsLimit()) {
@@ -132,14 +135,10 @@ export function prepareParsedVudooCatalog({ channelTitle, products: sources }, {
   const eanWarnings = [];
   const products = sources.map((source, index) => {
     try {
-      if (skipMissingSourceCategory && isMissingSourceCategory(source.product_type)) {
-        return {
-          id: source.id,
-          vudoo_sku: source.sku,
-          original_title: source.title,
-          product_type: source.product_type,
-          source,
-        };
+      if (skipMissingSourceCategory && isMissingSourceCategory(source.product_type) &&
+          !(typeof source.id === 'string' && source.id.trim())) {
+        return { id: source.id, vudoo_sku: source.sku, original_title: source.title,
+          product_type: source.product_type, source, categoryPlaceholder: true };
       }
       const product = normalizeVudooProduct(source);
       if (invalidSourceEan(source.ean)) {
@@ -147,11 +146,16 @@ export function prepareParsedVudooCatalog({ channelTitle, products: sources }, {
       }
       return product;
     } catch (error) {
+      if (skipMissingSourceCategory && isMissingSourceCategory(source.product_type)) {
+        return { id: source.id, vudoo_sku: source.sku, original_title: source.title,
+          product_type: source.product_type, source, categoryPlaceholder: true,
+          normalizationError: error.message };
+      }
       throw new Error(`Catalogo Vudoo, record ${index + 1}: ${error.message}`);
     }
   });
   const deduplicated = detectAndFilterDuplicates(skipMissingSourceCategory
-    ? products.filter(product => !isMissingSourceCategory(product.product_type))
+    ? products.filter(product => !product.categoryPlaceholder)
     : products);
   return { channelTitle, sources, products, eanWarnings, ...deduplicated };
 }

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import * as pathModule from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as xml from 'fast-xml-parser';
 import { catalogXml, itemXml, extraFields, parameters as fieldParameters, parameterGroups, categoryMappings } from './fixtures/vudoo.js';
 import { normalizeVudooProduct } from '../src/vudooXml.js';
@@ -252,15 +253,17 @@ test('Electron: import rejects missing catalogs and invalid IDs before calling B
   assert.deepEqual(result.calls, []);
 });
 
-test('Electron: preflight and import failures remain distinct, structured, and token-free', async () => {
+test('Electron: category warning and import failures remain distinct, structured, and token-free', async () => {
   const unmapped = parseCatalog(catalogXml(categorizedItem('SKU-UNMAPPED', 'Categoria sconosciuta')));
-  const blocked = await sandbox({
+  const warning = await sandbox({
     entry: '../electron/selectedImport.js', categoryMappings: partialCategoryMappings,
     action: async api => {
-      await assert.rejects(api.importSelectedCatalog(unmapped, ['SKU-UNMAPPED']), /IMPORT BLOCCATO/);
+      const result = await api.importSelectedCatalog(unmapped, ['SKU-UNMAPPED']);
+      assert.equal(result.categorySummary.unmappedValidCategoryProducts, 1);
+      assert.equal(result.preflightError, null);
     },
   });
-  assert.deepEqual(blocked.calls, []);
+  assert.equal(warning.calls.some(call => call.method === 'addInventoryProduct'), false);
 
   const parsed = parseCatalog(catalogXml(categorizedItem('SKU-ERROR', 'Categoria A')));
   let imported;
@@ -465,6 +468,32 @@ test('Core: runImport restituisce contatori DRY_RUN senza modificare process.exi
   assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 0);
 });
 
+test('Modalità operativa: simulazione, reale mockato e ritorno in simulazione usano la stessa guardia', async () => {
+  const result = await sandbox({ entry: '../src/importer.js', env: { DRY_RUN: 'true', TEST_MODE: 'false' },
+    action: async (api, context) => {
+      const simulated = await api.runImport();
+      assert.equal(simulated.simulated, 1);
+      assert.equal(simulated.created, 0);
+      assert.deepEqual(Array.from(simulated.simulatedSkus), ['SKU-A']);
+      assert.ok(context.calls.some(call => call.method === 'getInventories'));
+      assert.ok(context.logs.some(line => line.includes('"text_fields"')));
+      assert.ok(context.calls.every(call => call.method.startsWith('get')));
+      await assert.rejects(context.baseApi.callBase('addInventoryProduct', {}), /bloccata/);
+
+      context.config.setDryRunMode(false);
+      const real = await api.runImport();
+      assert.equal(real.created, 1);
+      assert.equal(real.simulated, 0);
+      assert.equal(context.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
+
+      context.config.setDryRunMode(true);
+      await assert.rejects(context.baseApi.callBase('addInventoryProduct', {}), /bloccata/);
+      assert.equal(context.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
+    },
+  });
+  assert.equal(result.exitCode, 0);
+});
+
 test('Core: errori import e preflight sono strutturati senza cambiare il processo', async () => {
   let failed;
   const itemError = await sandbox({ entry: '../src/importer.js', lookupError: true,
@@ -480,7 +509,7 @@ test('Core: errori import e preflight sono strutturati senza cambiare il process
     action: async api => { blocked = await api.runImport(); },
   });
   assert.equal(blocked.ok, false);
-  assert.match(blocked.preflightError, /BASE_API_TOKEN/);
+  assert.match(blocked.preflightError, /Credenziali Base.com non configurate/);
   assert.equal(preflightError.exitCode, 0);
   assert.deepEqual(preflightError.calls, []);
 });
@@ -602,7 +631,7 @@ test('Import selettivo DRY_RUN: simula soltanto il prodotto scelto', async () =>
   assert.ok(result.logs.some(line => line.includes('Prodotti selezionati: 1')));
 });
 
-test('Import selettivo: categoria non mappata selezionata segue block e skip', async () => {
+test('Import selettivo: categoria non mappata resta importabile con entrambe le policy legacy', async () => {
   const feed = catalogXml(categorizedItem('SKU-MAPPED', 'Categoria A') +
     categorizedItem('SKU-UNMAPPED', 'Categoria nuova'));
   for (const policy of ['block', 'skip']) {
@@ -611,30 +640,28 @@ test('Import selettivo: categoria non mappata selezionata segue block e skip', a
       env: { UNMAPPED_CATEGORY_POLICY: policy, DRY_RUN: 'false', TEST_MODE: 'false' },
       categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
       action: async api => {
-        const run = api.importVudooCatalog('test-company', { selectSources: sources => sources });
-        if (policy === 'block') await assert.rejects(run, /Categoria nuova/);
-        else assert.equal(await run, 0);
+        assert.equal(await api.importVudooCatalog('test-company', { selectSources: sources => sources }), 0);
       },
     });
-    assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
-      .map(call => call.parameters.sku), policy === 'block' ? [] : ['SKU-MAPPED']);
+    const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
+    assert.deepEqual(creates.map(call => call.parameters.sku), ['SKU-MAPPED', 'SKU-UNMAPPED']);
+    assert.equal(Object.hasOwn(creates[1].parameters, 'category_id'), false);
+    assert.equal(result.calls.some(call => call.method === 'addInventoryCategory' && call.parameters.name === 'Categoria nuova'), false);
   }
 });
 
-test('Import selettivo: supplier nuovo riceve solo le categorie scelte e conserva auto-mapping', async () => {
+test('Import selettivo: supplier nuovo non inventa mapping né crea configurazione', async () => {
   const feed = catalogXml(categorizedItem('SKU-CHOSEN', 'Categoria A') +
     categorizedItem('SKU-OTHER', 'Categoria non scelta'))
     .replace('<title>Test Supplier</title>', '<title>Nuovo Fornitore</title>');
   const result = await sandbox({
     entry: '../src/vudooImport.js', xml: feed, categoryMappings: partialCategoryMappings,
-    action: api => assert.rejects(api.importVudooCatalog('test-company', {
+    action: api => api.importVudooCatalog('test-company', {
       selectSources: sources => sources.filter(source => source.id === 'SKU-CHOSEN'),
-    }), /IMPORT BLOCCATO/),
+    }),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
-  const draft = [...result.writes].find(([filename]) => filename.endsWith('nuovo-fornitore.json'));
-  assert.ok(draft);
-  assert.deepEqual(JSON.parse(draft[1]).categories, { 'Categoria A': 'MAPPED_A' });
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 0);
+  assert.equal([...result.writes].some(([filename]) => filename.endsWith('nuovo-fornitore.json')), false);
 });
 
 test('Import selettivo: annullamento dopo il parsing non raggiunge Base', async () => {
@@ -684,7 +711,7 @@ test('Import selettivo: g:id mancante o duplicato discordante bloccano solo se s
   }), /discordanti/) });
 });
 
-test('XML remoto: categoria non mappata mostra il riepilogo completo e blocca prima di Base', async () => {
+test('XML remoto: categoria non mappata mostra warning e omette category_id', async () => {
   const result = await sandbox({
     entry: '../src/vudooImport.js',
     forbidCatalogFiles: true,
@@ -694,14 +721,18 @@ test('XML remoto: categoria non mappata mostra il riepilogo completo e blocca pr
         TEST_SUPPLIER: { source_titles: ['Test Supplier'], categories: {} },
       },
     },
-    action: api => assert.rejects(api.importVudooCatalog('test-company'), /IMPORT BLOCCATO/),
+    env: { DRY_RUN: 'false' },
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  const create = result.calls.find(call => call.method === 'addInventoryProduct');
+  assert.ok(create);
+  assert.equal(Object.hasOwn(create.parameters, 'category_id'), false);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
   assert.ok(result.logs.some(line => line.includes('NON MAPPATA: Vini, Gastronomia > Birra > Birra Artigianale')));
   assert.ok(result.logs.some(line => line.includes('0 categorie mappate, 1 categorie non mappate')));
 });
 
-test('Categorie policy block esplicita: categoria non mappata blocca senza scritture Base', async () => {
+test('Categorie policy block legacy non blocca una categoria non mappata', async () => {
   const result = await sandbox({
     entry: '../src/vudooImport.js',
     forbidCatalogFiles: true,
@@ -710,10 +741,10 @@ test('Categorie policy block esplicita: categoria non mappata blocca senza scrit
       canonical: canonicalCategoryMappings.canonical,
       suppliers: { TEST_SUPPLIER: { source_titles: ['Test Supplier'], categories: {} } },
     },
-    action: api => assert.rejects(api.importVudooCatalog('test-company'), /IMPORT BLOCCATO/),
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
-  assert.ok(result.logs.some(line => line.includes('Policy categorie non mappate: BLOCK')));
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryProduct').length, 1);
+  assert.ok(result.logs.some(line => line.includes('category_id omesso')));
 });
 
 test('Categorie policy non valida: errore di configurazione prima del fetch Vudoo', async () => {
@@ -726,7 +757,7 @@ test('Categorie policy non valida: errore di configurazione prima del fetch Vudo
   assert.deepEqual(result.calls, []);
 });
 
-test('Categorie policy skip: importa soltanto i prodotti mappati e mantiene contatori distinti', async () => {
+test('Categorie policy skip legacy importa anche i prodotti non mappati e mantiene contatori distinti', async () => {
   const xml = catalogXml([
     categorizedItem('SKU-MAPPED-A', 'Categoria A'),
     categorizedItem('SKU-UNMAPPED', 'Categoria Senza Mapping', 'Brand Escluso'),
@@ -745,14 +776,15 @@ test('Categorie policy skip: importa soltanto i prodotti mappati e mantiene cont
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
   const productWrites = result.calls.filter(call => call.method === 'addInventoryProduct');
-  assert.deepEqual(productWrites.map(call => call.parameters.sku), ['SKU-MAPPED-A', 'SKU-MAPPED-B']);
-  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), false);
+  assert.deepEqual(productWrites.map(call => call.parameters.sku), ['SKU-MAPPED-A', 'SKU-UNMAPPED', 'SKU-MAPPED-B']);
+  assert.equal(Object.hasOwn(productWrites[1].parameters, 'category_id'), false);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), true);
   assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
   assert.ok(result.logs.some(line => line.includes('Prodotti totali feed: 3')));
-  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 2')));
-  assert.ok(result.logs.some(line => line.includes('Esclusi categoria non mappata: 1')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 3')));
+  assert.ok(result.logs.some(line => line.includes('Senza categoria Base.com: 1')));
   assert.ok(result.logs.some(line => line.includes('Categorie reali non mappate: 1')));
-  assert.ok(result.logs.some(line => line.includes('Categoria Senza Mapping → 1 prodotti esclusi')));
+  assert.ok(result.logs.some(line => line.includes('Categoria Senza Mapping → 1 prodotti senza categoria Base.com')));
   assert.ok(result.logs.some(line => line.includes('Saltati perché invariati: 0')));
 });
 
@@ -760,7 +792,7 @@ test('Categorie policy skip: catalogo interamente mappato mantiene il flusso nor
   const result = await remoteSandbox({ env: { UNMAPPED_CATEGORY_POLICY: 'skip' } });
   assert.equal(result.calls.filter(call => call.method === 'getInventoryProductsList').length, 1);
   assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 1')));
-  assert.ok(result.logs.some(line => line.includes('Prodotti esclusi per categoria reale non mappata: 0')));
+  assert.ok(result.logs.some(line => line.includes('Categorie senza mapping Base.com: 0')));
 });
 
 test('XML remoto: EAN non valido produce warning ma il prodotto viene importato senza EAN', async () => {
@@ -781,7 +813,7 @@ test('XML remoto: EAN non valido produce warning ma il prodotto viene importato 
     && line.includes('Prodotto test') && line.includes('8056370403714-')));
 });
 
-test('Categorie policy skip: catalogo interamente non mappato non chiama Base e non incrementa SKIP', async () => {
+test('Categorie policy skip: catalogo interamente non mappato omette category_id', async () => {
   const result = await sandbox({
     entry: '../src/vudooImport.js',
     forbidCatalogFiles: true,
@@ -792,14 +824,16 @@ test('Categorie policy skip: catalogo interamente non mappato non chiama Base e 
     },
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  const create = result.calls.find(call => call.method === 'addInventoryProduct');
+  assert.ok(create);
+  assert.equal(Object.hasOwn(create.parameters, 'category_id'), false);
   assert.ok(result.logs.some(line => line.includes('Prodotti totali feed: 1')));
-  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 0')));
-  assert.ok(result.logs.some(line => line.includes('Esclusi categoria non mappata: 1')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 1')));
+  assert.ok(result.logs.some(line => line.includes('Senza categoria Base.com: 1')));
   assert.ok(result.logs.some(line => line.includes('Saltati perché invariati: 0')));
 });
 
-test('No name: policy block esclude sempre le categorie mancanti e registra un solo prodotto', async () => {
+test('No name: categoria mancante non esclude un prodotto valido e resta nel report', async () => {
   const xml = catalogXml([
     categorizedItem('SKU-MAPPED', 'Categoria A'),
     categorizedItem('SKU-NO-NAME', ' NO   NAME> no NAME ', 'Brand Solo Escluso'),
@@ -813,9 +847,10 @@ test('No name: policy block esclude sempre le categorie mancanti e registra un s
     categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct').map(call => call.parameters.sku), ['SKU-MAPPED']);
-  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), false);
-  assert.ok(result.logs.some(line => line.includes('Prodotti esclusi per categoria sorgente mancante: 1')));
+  const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.deepEqual(creates.map(call => call.parameters.sku), ['SKU-MAPPED', 'SKU-NO-NAME']);
+  assert.equal(Object.hasOwn(creates[1].parameters, 'category_id'), false);
+  assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 1')));
   assert.ok(result.logs.some(line => line.includes('Categorie reali non mappate: 0')));
   assert.ok(result.logs.some(line => line.includes('Saltati perché invariati: 0')));
   const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
@@ -826,7 +861,7 @@ test('No name: policy block esclude sempre le categorie mancanti e registra un s
   assert.equal(records[0].id, 'SKU-NO-NAME');
 });
 
-test('No name: product_type vuoto o assente viene escluso anche con policy block', async () => {
+test('No name: product_type vuoto o assente non blocca prodotti validi', async () => {
   const noCategory = categorizedItem('SKU-ABSENT', 'Categoria A')
     .replace(/<g:product_type>.*?<\/g:product_type>/, '');
   const xml = catalogXml([
@@ -841,9 +876,11 @@ test('No name: product_type vuoto o assente viene escluso anche con policy block
     env: { DRY_RUN: 'false', TEST_MODE: 'false' },
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
+  assert.deepEqual(creates.map(call => call.parameters.sku), ['SKU-EMPTY', 'SKU-ABSENT']);
+  assert.ok(creates.every(call => !Object.hasOwn(call.parameters, 'category_id')));
   assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 2')));
-  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 0')));
+  assert.ok(result.logs.some(line => line.includes('Prodotti importabili: 2')));
   const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
   assert.equal(JSON.parse(report[1]).length, 2);
 });
@@ -890,7 +927,7 @@ test('No name: g:id assente viene skippato, conteggiato e non inserito nel regis
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
   assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
-    .map(call => call.parameters.sku), ['SKU-MAPPED']);
+    .map(call => call.parameters.sku), ['SKU-MAPPED', 'SKU-REGISTERED']);
   assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 2')));
   assert.ok(result.logs.some(line => line.includes('Prodotti senza categoria non registrabili (g:id mancante): 1')));
   const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
@@ -914,7 +951,7 @@ test('No name: solo prodotti senza g:id terminano senza Base e senza creare regi
   assert.equal([...result.writes].some(([filename]) => filename.endsWith('no_name_products.json')), false);
 });
 
-test('Nuovo supplier: genera bozza solo con categorie reali e ferma import prima di Base', async () => {
+test('Nuovo supplier: avvisa senza generare mapping o bozza di configurazione', async () => {
   const xml = catalogXml([
     categorizedItem('SKU-NEW', 'PARFUM'),
     categorizedItem('SKU-NO-NAME', 'No name > No name'),
@@ -925,20 +962,14 @@ test('Nuovo supplier: genera bozza solo con categorie reali e ferma import prima
     xml,
     categoryMappings: { canonical: partialCategoryMappings.canonical, suppliers: {} },
     env: { UNMAPPED_CATEGORY_POLICY: 'skip' },
-    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
-      error.message.includes('config/suppliers/pippo-spa.json') &&
-      error.message.includes('Categorie reali trovate: 1') &&
-      error.message.includes('Auto-mappate con certezza: 0') &&
-      error.message.includes('Da configurare manualmente: 1')),
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
-  const draft = [...result.writes].find(([filename]) => filename.endsWith('pippo-spa.json'));
-  assert.ok(draft);
-  assert.deepEqual(JSON.parse(draft[1]).categories, { PARFUM: null });
+  assert.equal([...result.writes].some(([filename]) => filename.endsWith('pippo-spa.json')), false);
+  assert.ok(result.logs.some(line => line.includes('WARNING CATEGORIE')));
   assert.ok(result.logs.some(line => line.includes('Prodotti con categoria sorgente mancante: 1')));
 });
 
-test('Nuovo supplier: scaffold auto-mappa solo match sicuri e blocca comunque prima di Base', async () => {
+test('Nuovo supplier: non crea automaticamente categorie Base o file di mapping', async () => {
   const xml = catalogXml([
     categorizedItem('SKU-APPROVED', 'Categoria A'),
     categorizedItem('SKU-CANONICAL', ' categoria mappata B '),
@@ -951,24 +982,14 @@ test('Nuovo supplier: scaffold auto-mappa solo match sicuri e blocca comunque pr
     xml,
     categoryMappings: partialCategoryMappings,
     env: { UNMAPPED_CATEGORY_POLICY: 'skip', DRY_RUN: 'false' },
-    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
-      error.message.includes('Categorie reali trovate: 3') &&
-      error.message.includes('Auto-mappate con certezza: 2') &&
-      error.message.includes('supplier: 1, base_path canonico: 1') &&
-      error.message.includes('Da configurare manualmente: 1') &&
-      error.message.includes('config/suppliers/nuovo-fornitore.json')),
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
-  const draft = [...result.writes].find(([filename]) => filename.endsWith('nuovo-fornitore.json'));
-  assert.ok(draft);
-  assert.deepEqual(JSON.parse(draft[1]).categories, {
-    'Categoria A': 'MAPPED_A',
-    ' categoria mappata B ': 'MAPPED_B',
-    'Categoria ignota': null,
-  });
+  assert.equal([...result.writes].some(([filename]) => filename.endsWith('nuovo-fornitore.json')), false);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
+  assert.ok(result.logs.some(line => line.includes('Categorie reali non mappate: 3')));
 });
 
-test('Supplier esistente: nuova categoria reale espone conteggio, policy e file da aggiornare', async () => {
+test('Supplier esistente: nuova categoria reale espone conteggio e warning', async () => {
   const xml = catalogXml([
     categorizedItem('SKU-NEW-A', 'Nuova Categoria'),
     categorizedItem('SKU-NEW-B', 'Nuova Categoria'),
@@ -978,15 +999,13 @@ test('Supplier esistente: nuova categoria reale espone conteggio, policy e file 
     forbidCatalogFiles: true,
     xml,
     categoryMappings: partialCategoryMappings,
-    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
-      error.message.includes('Nuova Categoria: 2 prodotti') &&
-      error.message.includes('config/suppliers/test-supplier.json') &&
-      error.message.includes('UNMAPPED_CATEGORY_POLICY=block')),
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  assert.ok(result.logs.some(line => line.includes('NON MAPPATA: Nuova Categoria (2 prodotti)')));
+  assert.ok(result.logs.some(line => line.includes('Categorie senza mapping Base.com: 2')));
 });
 
-test('Supplier esistente: mapping null con policy skip esclude la categoria e continua', async () => {
+test('Supplier esistente: mapping null con policy skip importa senza category_id', async () => {
   const xml = catalogXml([
     categorizedItem('SKU-MAPPED', 'Categoria A'),
     categorizedItem('SKU-NULL', 'Categoria Non Risolta'),
@@ -1001,24 +1020,24 @@ test('Supplier esistente: mapping null con policy skip esclude la categoria e co
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
   assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
-    .map(call => call.parameters.sku), ['SKU-MAPPED']);
+    .map(call => call.parameters.sku), ['SKU-MAPPED', 'SKU-NULL']);
+  assert.equal(Object.hasOwn(result.calls.filter(call => call.method === 'addInventoryProduct')[1].parameters, 'category_id'), false);
   assert.ok(result.logs.some(line => line.includes('NON MAPPATA: Categoria Non Risolta (1 prodotti)')));
-  assert.ok(result.logs.some(line => line.includes('Esclusi categoria non mappata: 1')));
+  assert.ok(result.logs.some(line => line.includes('Senza categoria Base.com: 1')));
 });
 
-test('Supplier esistente: mapping null con policy block ferma prima di Base', async () => {
+test('Supplier esistente: mapping null con policy block legacy resta warning', async () => {
   const result = await sandbox({
     entry: '../src/vudooImport.js',
     forbidCatalogFiles: true,
     xml: catalogXml(categorizedItem('SKU-NULL', 'Categoria Non Risolta')),
     env: { UNMAPPED_CATEGORY_POLICY: 'block', DRY_RUN: 'false' },
     categoryMappings: categoryMappingsWithNull,
-    action: api => assert.rejects(api.importVudooCatalog('test-company'), error =>
-      error.message.includes('Categoria Non Risolta: 1 prodotti') &&
-      error.message.includes('config/suppliers/test-supplier.json') &&
-      error.message.includes('UNMAPPED_CATEGORY_POLICY=block')),
+    action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
-  assert.deepEqual(result.calls.map(call => call.method), ['VUDOO_GET']);
+  const create = result.calls.find(call => call.method === 'addInventoryProduct');
+  assert.ok(create);
+  assert.equal(Object.hasOwn(create.parameters, 'category_id'), false);
 });
 
 test('Supplier esistente: mapping null non presente nel feed non blocca policy block', async () => {
@@ -1053,18 +1072,18 @@ test('Supplier esistente: mix mapped/null/no-name mantiene conteggi distinti', a
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
   assert.deepEqual(result.calls.filter(call => call.method === 'addInventoryProduct')
-    .map(call => call.parameters.sku), ['SKU-MAPPED-1', 'SKU-MAPPED-2']);
+    .map(call => call.parameters.sku), ['SKU-MAPPED-1', 'SKU-NULL-1', 'SKU-NO-NAME', 'SKU-MAPPED-2', 'SKU-NULL-2']);
   for (const line of [
-    'Prodotti totali feed: 5', 'Prodotti importabili: 2',
-    'Prodotti esclusi per categoria sorgente mancante: 1',
-    'Esclusi categoria non mappata: 2', 'Categorie reali non mappate: 1',
-    'Categoria Non Risolta → 2 prodotti esclusi',
+    'Prodotti totali feed: 5', 'Prodotti importabili: 5',
+    'Prodotti con categoria sorgente mancante: 1',
+    'Senza categoria Base.com: 3', 'Categorie reali non mappate: 1',
+    'Categoria Non Risolta → 2 prodotti senza categoria Base.com',
   ]) assert.ok(result.logs.some(log => log.includes(line)), line);
   const report = [...result.writes].find(([filename]) => filename.endsWith('no_name_products.json'));
   assert.deepEqual(JSON.parse(report[1]).map(product => product.id), ['SKU-NO-NAME']);
 });
 
-test('Hardening: feed misto esclude categorie non importabili, avverte per EAN e conserva stock zero', async () => {
+test('Hardening: feed misto include categorie non mappate, avverte per EAN e conserva stock zero', async () => {
   const valid = categorizedItem('SKU-VALID', 'Categoria A')
     .replace('<g:id>SKU-VALID</g:id>', '<g:id>SKU-VALID</g:id><g:ean>8056370403714-</g:ean>')
     .replace('<g:quantity>234</g:quantity>', '<g:quantity>0</g:quantity>');
@@ -1087,42 +1106,41 @@ test('Hardening: feed misto esclude categorie non importabili, avverte per EAN e
     action: async api => assert.equal(await api.importVudooCatalog('test-company'), 0),
   });
   const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
-  assert.deepEqual(creates.map(call => call.parameters.sku), ['SKU-VALID', 'SKU-SECOND']);
+  assert.deepEqual(creates.map(call => call.parameters.sku), ['SKU-VALID', 'SKU-NO-NAME', 'SKU-UNMAPPED', 'SKU-SECOND']);
+  assert.equal(Object.hasOwn(creates[1].parameters, 'category_id'), false);
+  assert.equal(Object.hasOwn(creates[2].parameters, 'category_id'), false);
   assert.equal(creates[0].parameters.stock.bl_30, 0);
   assert.equal(creates[0].parameters.ean, undefined);
-  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), false);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryManufacturer'), true);
   assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
   for (const line of [
-    'Prodotti totali feed: 4', 'Prodotti importabili: 2',
-    'Prodotti esclusi per categoria sorgente mancante: 1',
-    'Esclusi categoria non mappata: 1', 'Categorie reali non mappate: 1',
-    'EAN non validi omessi: 1', 'Creati: 2', 'Saltati perché invariati: 0',
+    'Prodotti totali feed: 4', 'Prodotti importabili: 4',
+    'Prodotti con categoria sorgente mancante: 1',
+    'Senza categoria Base.com: 2', 'Categorie reali non mappate: 1',
+    'EAN non validi omessi: 1', 'Creati: 4', 'Saltati perché invariati: 0',
   ]) assert.ok(result.logs.some(log => log.includes(line)), line);
 });
 
-test('XML remoto: Base vuota crea esclusivamente il percorso canonico completo', async () => {
+test('XML remoto: percorso canonico assente dalle categorie globali omette category_id senza creare categorie', async () => {
   const result = await remoteSandbox({
     env: { DRY_RUN: 'false' },
     categories: [],
     categoryMappings: canonicalCategoryMappings,
   });
-  const creates = result.calls.filter(call => call.method === 'addInventoryCategory');
-  assert.deepEqual(creates.map(call => call.parameters.name), ['Categoria Canonica', 'Foglia Canonica']);
-  assert.equal(creates[0].parameters.parent_id, 0);
-  assert.equal(creates[1].parameters.parent_id, 100 + result.calls.indexOf(creates[0]) + 1);
-  assert.ok(creates.every(call => !call.parameters.name.includes('Vini, Gastronomia')));
+  assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
+  assert.equal(result.calls.find(call => call.method === 'getInventoryCategories').parameters.inventory_id, undefined);
+  assert.equal(Object.hasOwn(result.calls.find(call => call.method === 'addInventoryProduct').parameters, 'category_id'), false);
+  assert.ok(result.logs.some(line => line.includes('UNRESOLVED_CATEGORY_MAPPING')));
 });
 
-test('XML remoto: Base con radice canonica crea soltanto la foglia', async () => {
+test('XML remoto: la sola radice globale non basta a scegliere una foglia', async () => {
   const result = await remoteSandbox({
     env: { DRY_RUN: 'false' },
     categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Canonica' }],
     categoryMappings: canonicalCategoryMappings,
   });
-  const creates = result.calls.filter(call => call.method === 'addInventoryCategory');
-  assert.equal(creates.length, 1);
-  assert.equal(creates[0].parameters.name, 'Foglia Canonica');
-  assert.equal(creates[0].parameters.parent_id, 70);
+  assert.equal(result.calls.some(call => call.method === 'addInventoryCategory'), false);
+  assert.equal(Object.hasOwn(result.calls.find(call => call.method === 'addInventoryProduct').parameters, 'category_id'), false);
 });
 
 test('XML remoto: Base con percorso canonico completo non crea categorie', async () => {
@@ -1185,7 +1203,8 @@ test('XML remoto: prodotto invariato salta, cambiamento aggiorna solo stock con 
   const payload = buildBasePayload(product, remoteConfig);
   const categories = [{ category_id: 50, parent_id: 0, name: 'Vini, Gastronomia' },
     { category_id: 51, parent_id: 50, name: 'Birra' }, { category_id: 52, parent_id: 51, name: 'Birra Artigianale' }];
-  const saved = { ...payload, images: { 1: product.image_link }, manufacturer_id: 40, category_id: 52 };
+  const saved = { ...payload, images: Object.fromEntries(Object.entries(payload.images ?? {})
+    .map(([position, url]) => [Number(position) + 1, url.replace(/^url:/, '')])), manufacturer_id: 40, category_id: 52 };
   const unchanged = await remoteSandbox({ existing: true, details: saved, categories, env: { DRY_RUN: 'false' } });
   assert.ok(unchanged.logs.some(log => log.includes('Saltati perché invariati: 1')));
   assert.ok(unchanged.calls.every(call => call.method === 'VUDOO_GET' || call.method.startsWith('get')));
@@ -1252,21 +1271,22 @@ test('XML remoto: TEST_MODE seleziona un solo SKU dopo validazione e dedup compl
   assert.ok(result.logs.some(log => log.includes('Prodotti elaborati: 3\nSKU unici: 2\nDuplicati nel feed: 1')));
 });
 
-test('XML remoto: CREATE simulate con mock riusano gerarchia e produttore, nessuna immagine extra', async () => {
+test('XML remoto: CREATE simulate con mock riusano produttore, omettono categoria non globale e includono immagini', async () => {
   const result = await remoteSandbox({ env: { DRY_RUN: 'false', TEST_MODE: 'false' }, categories: [], manufacturers: [],
     xml: catalogXml(itemXml + itemXml.replace('<g:id>389578</g:id>', '<g:id>389579</g:id>').replace('<g:size>3000 ml.</g:size>', '<g:size>250 ml.</g:size>')) });
   const creates = result.calls.filter(call => call.method === 'addInventoryProduct');
   assert.equal(creates.length, 2);
   assert.equal(result.calls.filter(call => call.method === 'addInventoryManufacturer').length, 1);
-  assert.equal(result.calls.filter(call => call.method === 'addInventoryCategory').length, 3);
-  assert.equal(creates[0].parameters.category_id, creates[1].parameters.category_id);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryCategory').length, 0);
+  assert.equal(Object.hasOwn(creates[0].parameters, 'category_id'), false);
+  assert.equal(Object.hasOwn(creates[1].parameters, 'category_id'), false);
   assert.equal(creates[0].parameters.manufacturer_id, creates[1].parameters.manufacturer_id);
   assert.equal(creates[0].parameters.stock.bl_30, 234);
   assert.equal(creates[0].parameters.text_fields.features.MPN, 'MANUFACTURER-PART');
   assert.equal(creates[0].parameters.sku, '389578');
   assert.equal(creates[1].parameters.sku, '389579');
   assert.equal(creates[0].parameters.text_fields.features['Vudoo SKU'], 'HKZDVHCW');
-  assert.equal(Object.keys(creates[0].parameters.images).length, 1);
+  assert.equal(Object.keys(creates[0].parameters.images).length, 3);
   assert.equal(result.writes.size, 0);
 });
 
@@ -1276,7 +1296,8 @@ for (const operation of ['CREATE', 'UPDATE']) {
       const product = normalizeVudooProduct(parseCatalogXml(catalogXml())[0]);
       const remoteConfig = { ...config, extraFields: new Map(extraFields.map(field => [field.name, field])) };
       const desired = buildBasePayload(product, remoteConfig);
-      const saved = { ...desired, images: { 1: product.image_link } };
+      const saved = { ...desired, images: Object.fromEntries(Object.entries(desired.images ?? {})
+        .map(([position, url]) => [Number(position) + 1, url.replace(/^url:/, '')])) };
       if (!matches) saved.text_fields = { ...saved.text_fields, features: { ...saved.text_fields.features, MPN: 'different' } };
       let result;
       const run = await sandbox({ entry: '../src/baseApi.js', env: { DRY_RUN: 'false' }, existing: true, details: saved,
@@ -1383,11 +1404,13 @@ async function sandbox(options = {}) {
         getInventoryWarehouses: { warehouses: options.warehouses ?? [{ warehouse_id: 30, warehouse_type: 'bl', name: 'Warehouse' }] },
         getInventoryManufacturers: { manufacturers: options.manufacturers ?? [{ manufacturer_id: 40, name: 'Marca' }] },
         getInventoryCategories: { categories: options.categories ?? [{ category_id: 50, parent_id: 0, name: 'Casa' }, { category_id: 51, parent_id: 50, name: 'Cura' }] },
+        getInventoryTags: { tags: options.tags ?? [] },
         getInventoryProductsList: options.lookupError ? { status: 'ERROR', error_code: 'LOOKUP_FAILED', error_message: 'Errore simulato' } : { products: options.matches ?? (options.existing ? { 60: { id: 60, sku: parameters.filter_sku } } : {}) },
         getInventoryProductsData: { products: { 60: options.details ?? details } },
         addInventoryProduct: { product_id: parameters.product_id ?? 60 },
         addInventoryCategory: { category_id: 100 + calls.length },
-        addInventoryManufacturer: { manufacturer_id: 200 + calls.length }
+        addInventoryManufacturer: { manufacturer_id: 200 + calls.length },
+        addInventoryTag: { tag_id: 300 + calls.length }
       };
       assert.ok(responses[method], 'Metodo inatteso: ' + method);
       return { ok: true, json: async () => ({ status: 'SUCCESS', ...responses[method] }) };
@@ -1436,7 +1459,10 @@ async function sandbox(options = {}) {
   const modules = new Map();
   function load(id) {
     if (modules.has(id)) return modules.get(id);
-    const exports = id === 'node:fs/promises' ? fakeFs : id === 'fast-xml-parser' ? xml : null;
+    const exports = id === 'node:fs/promises' ? fakeFs
+      : id === 'node:path' ? pathModule
+      : id === 'node:url' ? { pathToFileURL }
+      : id === 'fast-xml-parser' ? xml : null;
     const module = exports ? new vm.SyntheticModule(Object.keys(exports), function () {
       for (const [key, value] of Object.entries(exports)) this.setExport(key, value);
     }, { context, identifier: id }) : new vm.SourceTextModule(fs.readFileSync(fileURLToPath(id), 'utf8'), {
@@ -1448,7 +1474,10 @@ async function sandbox(options = {}) {
   const module = load(new URL(options.entry ?? '../tools/legacy/import-json.js', import.meta.url).href);
   await module.link((specifier, parent) => load(specifier.startsWith('.') ? new URL(specifier, parent.identifier).href : specifier));
   await module.evaluate();
-  if (options.action) await options.action(module.namespace, { calls, logs, waits, advance: milliseconds => { now += milliseconds; } });
+  if (options.action) await options.action(module.namespace, { calls, logs, waits,
+    config: modules.get(new URL('../src/config.js', import.meta.url).href)?.namespace,
+    baseApi: modules.get(new URL('../src/baseApi.js', import.meta.url).href)?.namespace,
+    advance: milliseconds => { now += milliseconds; } });
   for (let i = 0; i < 30; i++) await new Promise(resolve => setImmediate(resolve));
   return { calls, logs, writes, waits, exitCode: processMock.exitCode };
 }
@@ -1571,7 +1600,7 @@ test('UPDATE in DRY_RUN resta simulato', async () => {
 test('Categorie e produttori assenti: simulazione senza ID inventati', async () => {
   const result = await sandbox({ categories: [], manufacturers: [] });
   assert.equal(result.exitCode, 0);
-  assert.ok(result.logs.some(log => log.includes('Categoria da creare')));
+  assert.equal(result.logs.some(log => log.includes('Categoria da creare')), false);
   assert.ok(result.logs.some(log => log.includes('Produttore da creare')));
   assert.ok(result.calls.every(call => call.method.startsWith('get')));
 });
@@ -1630,14 +1659,13 @@ test('Tutti i prodotti: dedup e prosecuzione dopo errore', async () => {
   assert.ok(result.logs.some(log => log.includes('Duplicati nel feed saltati: 1')));
   assert.ok(result.logs.some(log => log.includes('SKU con errori: INVALID')));
 });
-test('Creazioni simulate via mock: gerarchia e mappe riutilizzate', async () => {
+test('Creazioni simulate via mock: nessuna categoria inventata e produttore riutilizzato', async () => {
   const result = await sandbox({ env: { DRY_RUN: 'false', TEST_MODE: 'false' }, categories: [], manufacturers: [], products: [source, { ...source, id: 'SKU-B', brand: ' MARCA ' }] });
   assert.equal(result.exitCode, 0);
   const categories = result.calls.filter(call => call.method === 'addInventoryCategory');
-  assert.equal(categories.length, 2);
-  assert.equal(categories[0].parameters.parent_id, 0);
-  assert.ok(categories[1].parameters.parent_id > 0);
+  assert.equal(categories.length, 0);
   assert.equal(result.calls.filter(call => call.method === 'addInventoryManufacturer').length, 1);
+  assert.ok(result.calls.filter(call => call.method === 'addInventoryProduct').every(call => !Object.hasOwn(call.parameters, 'category_id')));
   assert.ok(result.logs.some(log => log.includes('Creati: 2')));
 });
 test('UPDATE mock: ID corretto, nessuna riscrittura dei campi invariati', async () => {
@@ -1651,20 +1679,21 @@ test('Gate API blocca scritture dirette in DRY_RUN', async () => {
     await assert.rejects(api.callBase('addInventoryProduct', {}), /bloccata/);
   } });
 });
-test('Categorie omonime con stesso parent: errore senza creazioni', async () => {
+test('Categorie omonime non mappate non vengono scelte arbitrariamente', async () => {
   const result = await sandbox({ categories: [{ category_id: 50, name: 'Casa', parent_id: 0 }, { category_id: 51, name: ' CASA ', parent_id: 0 }] });
-  assert.equal(result.exitCode, 1);
+  assert.equal(result.exitCode, 0);
   assert.ok(result.calls.every(call => call.method.startsWith('get')));
 });
 test('Produttori omonimi: errore senza scelta arbitraria', async () => {
   const result = await sandbox({ manufacturers: [{ manufacturer_id: 40, name: 'Marca' }, { manufacturer_id: 41, name: ' MARCA ' }] });
   assert.equal(result.exitCode, 1);
 });
-test('Punteggiatura categorie conservata; solo maggiore separa la gerarchia', async () => {
+test('Categoria sorgente con punteggiatura non viene trasformata in categoria Base', async () => {
   const result = await sandbox({ env: { DRY_RUN: 'false' }, categories: [], products: [{ ...source, product_type: 'Casa, bagno/cucina | accessori > Cura' }] });
   const created = result.calls.filter(call => call.method === 'addInventoryCategory');
-  assert.equal(created.length, 2);
-  assert.equal(created[0].parameters.name, 'Casa, bagno/cucina | accessori');
+  assert.equal(created.length, 0);
+  const product = result.calls.find(call => call.method === 'addInventoryProduct');
+  assert.equal(Object.hasOwn(product.parameters, 'category_id'), false);
 });
 test('Warehouse ambiguo blocca lo stock; ID esplicito risolve', async () => {
   const warehouses = [{ warehouse_id: 30, warehouse_type: 'bl' }, { warehouse_id: 31, warehouse_type: 'bl' }];
@@ -2435,6 +2464,82 @@ test('Bulk import: SKU ambiguo resta un errore e non sceglie un prodotto arbitra
   assert.deepEqual(Array.from(imported.errorSkus), ['AMB-1']);
   assert.equal(imported.unchanged, 49);
   assert.equal(result.calls.some(call => call.method === 'addInventoryProduct'), false);
+});
+
+test('Product Tags: preflight REALE legge una volta e pianifica senza scrivere', async () => {
+  const tagged = normalizeProduct({ ...source, tags: ['Unisex', 'Incenso'] });
+  let plan;
+  const result = await sandbox({ entry: '../src/preflight.js', tags: [{ tag_id: 5, name: 'Unisex' }],
+    env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => { plan = await api.runPreflightCheck({ products: [tagged], uniqueProducts: [tagged], duplicatesMap: new Map() }); },
+  });
+  assert.deepEqual(Array.from(plan.tagPlans[0].existing), ['Unisex']);
+  assert.deepEqual(Array.from(plan.tagPlans[0].wouldCreate), ['Incenso']);
+  assert.equal(plan.tagPlans[0].status, 'TAG_MISSING_WILL_CREATE');
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryTags').length, 1);
+  assert.equal(result.calls.some(call => call.method.startsWith('add')), false);
+});
+
+test('Product Tags: preflight rifiuta TAG_TOO_LONG prima di richieste o scritture', async () => {
+  const tagged = normalizeProduct({ ...source, tags: ['x'.repeat(26)] });
+  const result = await sandbox({ entry: '../src/preflight.js', env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => { await assert.rejects(
+      api.runPreflightCheck({ products: [tagged], uniqueProducts: [tagged], duplicatesMap: new Map() }),
+      error => error.code === 'TAG_TOO_LONG' && error.tagName === 'x'.repeat(26) &&
+        error.length === 26 && error.maximum === 25); },
+  });
+  assert.deepEqual(result.calls, []);
+});
+
+test('Product Tags: import REALE crea il tag prima del prodotto e riusa una sola GET nel batch', async () => {
+  const tagged = [1, 2].map(index => normalizeProduct({ ...source, id: `TAG-${index}`, tags: ['Incenso'] }));
+  let imported;
+  const result = await sandbox({ entry: '../src/importer.js', env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => { imported = await api.runImport({ inventory: config.inventory, priceGroup: config.priceGroup,
+      warehouse: config.warehouse, products: tagged, selectedProducts: tagged, normalizedProducts: true, feedDuplicates: 0 }); },
+  });
+  assert.equal(imported.created, 2);
+  assert.equal(result.calls.filter(call => call.method === 'getInventoryTags').length, 1);
+  assert.equal(result.calls.filter(call => call.method === 'addInventoryTag').length, 1);
+  const createIndex = result.calls.findIndex(call => call.method === 'addInventoryTag');
+  const productIndex = result.calls.findIndex(call => call.method === 'addInventoryProduct');
+  assert.ok(createIndex >= 0 && createIndex < productIndex);
+  assert.deepEqual(Array.from(result.calls[productIndex].parameters.tags), ['Incenso']);
+});
+
+for (const [failureMethod, errorCode] of [['getInventoryTags', 'TAG_READ_FAILED'], ['addInventoryTag', 'TAG_CREATE_FAILED']]) {
+  test(`Product Tags: ${failureMethod} fallita blocca la write prodotto`, async () => {
+    const tagged = normalizeProduct({ ...source, tags: ['Incenso'] });
+    let imported;
+    const result = await sandbox({ entry: '../src/importer.js', env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+      response: method => method === failureMethod ? { ok: true, json: async () =>
+        ({ status: 'ERROR', error_code: errorCode, error_message: 'Errore simulato' }) } : undefined,
+      action: async api => { imported = await api.runImport({ inventory: config.inventory, priceGroup: config.priceGroup,
+        warehouse: config.warehouse, products: [tagged], selectedProducts: [tagged], normalizedProducts: true, feedDuplicates: 0 }); },
+    });
+    assert.equal(imported.errors, 1);
+    assert.deepEqual(Array.from(imported.tagErrors, item => item.code),
+      [failureMethod === 'getInventoryTags' ? 'TAG_READ_ERROR' : 'TAG_CREATE_ERROR']);
+    assert.equal(imported.tagErrors[0].tagName, failureMethod === 'addInventoryTag' ? 'Incenso' : null);
+    assert.equal(result.calls.some(call => call.method === 'addInventoryProduct'), false);
+    if (failureMethod === 'getInventoryTags') assert.equal(result.calls.some(call => call.method === 'addInventoryTag'), false);
+  });
+}
+
+test('Product Tags: UPDATE senza lista esplicita non cancella tag Base; [] li rimuove intenzionalmente', async () => {
+  for (const explicit of [false, true]) {
+    const tagged = normalizeProduct({ ...source, ...(explicit ? { tags: [] } : {}) });
+    const result = await sandbox({ entry: '../src/importer.js', existing: true,
+      details: { ...details, tags: ['Presistente'], prices: { 20: 24 } },
+      env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+      action: async api => { const imported = await api.runImport({ inventory: config.inventory, priceGroup: config.priceGroup,
+        warehouse: config.warehouse, products: [tagged], selectedProducts: [tagged], normalizedProducts: true, feedDuplicates: 0 });
+        assert.equal(imported.updated, 1); },
+    });
+    const payload = result.calls.find(call => call.method === 'addInventoryProduct').parameters;
+    assert.equal(Object.hasOwn(payload, 'tags'), explicit);
+    if (explicit) assert.deepEqual(Array.from(payload.tags), []);
+  }
 });
 
 test('Rate limiter: il limite configurato 200 viene applicato realmente', async () => {

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   filterCatalogProducts, filterOptions, isSelectableId,
   toggleSelectedId, selectFilteredIds, deselectFilteredIds,
@@ -45,19 +46,49 @@ test('Categorie e brand sono opzioni ordinate, senza vuoti o duplicati', () => {
   assert.deepEqual(filterOptions(products, 'brand'), ['Alba', 'Wally']);
 });
 
-test('Filtri categoria completa, brand e query si combinano senza alterare il catalogo', () => {
+test('Filtro categoria e ricerca globale si combinano senza alterare il catalogo', () => {
   const snapshot = structuredClone(products);
   assert.deepEqual(ids(filterCatalogProducts(products, { categoryFilter: 'Casa > Profumi' })), ['283813', '283814']);
-  assert.deepEqual(ids(filterCatalogProducts(products, { brandFilter: 'Alba' })), ['283815', '']);
+  assert.deepEqual(ids(filterCatalogProducts(products, { searchQuery: 'Alba' })), ['283815', '']);
   assert.deepEqual(ids(filterCatalogProducts(products, {
-    categoryFilter: 'Casa > Profumi', brandFilter: 'Wally',
+    categoryFilter: 'Casa > Profumi', searchQuery: 'Wally',
   })), ['283813', '283814']);
   assert.deepEqual(ids(filterCatalogProducts(products, {
-    searchQuery: 'diffusore', categoryFilter: 'Casa > Profumi', brandFilter: 'Wally',
+    searchQuery: 'diffusore', categoryFilter: 'Casa > Profumi',
   })), ['283814']);
   assert.deepEqual(ids(filterCatalogProducts(products, { categoryFilter: 'Profumi' })), []);
   assert.deepEqual(ids(filterCatalogProducts(products, { searchQuery: 'inesistente' })), []);
   assert.deepEqual(products, snapshot);
+});
+
+test('Product Manager conserva categoria canonica, disponibilità, EAN e immagini combinabili', () => {
+  const fixture = [
+    { id:'A', sku:'SKU-A', title:'Profumo', category:'Bellezza', canonicalCategory:'Fragranze',
+      availability:'in stock', quantity:2, ean:'123', imageLink:'https://example.test/a.jpg' },
+    { id:'B', sku:'SKU-B', title:'Crema', category:'Bellezza', canonicalCategory:'Cosmesi',
+      availability:'out of stock', quantity:0, ean:'', imageLink:'' },
+    { id:'C', sku:'SKU-C', title:'Profumo', category:'Bellezza', canonicalCategory:'Fragranze',
+      availability:'in stock', quantity:1, ean:'bad', imageLink:'https://example.test/c.jpg',
+      basePreflight:{checks:[{code:'ean',status:'WARNING'}]} },
+  ];
+  assert.deepEqual(ids(filterCatalogProducts(fixture,{canonicalFilter:'Fragranze'})),['A','C']);
+  assert.deepEqual(ids(filterCatalogProducts(fixture,{availabilityFilter:'unavailable'})),['B']);
+  assert.deepEqual(ids(filterCatalogProducts(fixture,{eanFilter:'missing'})),['B']);
+  assert.deepEqual(ids(filterCatalogProducts(fixture,{eanFilter:'invalid'})),['C']);
+  assert.deepEqual(ids(filterCatalogProducts(fixture,{imageFilter:'missing'})),['B']);
+  assert.deepEqual(ids(filterCatalogProducts(fixture,{searchQuery:'sku-a',categoryFilter:'Bellezza',
+    canonicalFilter:'Fragranze',availabilityFilter:'available',eanFilter:'present',imageFilter:'present'})),['A']);
+  assert.deepEqual(ids(filterCatalogProducts(fixture,{supplierFilter:'unused',brandFilter:'unused',
+    baseStatusFilter:'BLOCKING_ERROR',preflightFilter:'BLOCKING_ERROR'})),['A','B','C']);
+});
+
+test('Product Manager UI shows only the requested six filters', () => {
+  const source = readFileSync(new URL('../renderer/src/pages/CatalogPage.jsx', import.meta.url),'utf8');
+  const labels = [...source.matchAll(/<label className="form-field(?: grow filter-search)?"><span>([^<]+)<\/span><select/g)].map(match=>match[1]);
+  assert.deepEqual(labels.filter(label=>['Categoria','Canonica','Disponibilità','EAN','Immagini'].includes(label)),
+    ['Categoria','Canonica','Disponibilità','EAN','Immagini']);
+  assert.match(source, /<span>Ricerca globale<\/span>/);
+  for (const removed of ['Supplier','Brand','Stato Base','Preflight']) assert.ok(!labels.includes(removed));
 });
 
 test('Righe filtrate conservano la posizione originale per una key React stabile', () => {
@@ -79,7 +110,7 @@ test('Seleziona risultati fa union senza duplicati e conserva selezioni fuori fi
   const chosen = selectFilteredIds(['283815'], visible);
   assert.deepEqual(chosen, ['283815', '283813', '283814']);
   assert.equal(selectFilteredIds(chosen, visible), chosen);
-  assert.deepEqual(selectFilteredIds([], filterCatalogProducts(products, { brandFilter: 'Alba' })), ['283815']);
+  assert.deepEqual(selectFilteredIds([], filterCatalogProducts(products, { searchQuery: 'Alba' })), ['283815']);
 });
 
 test('Deseleziona risultati rimuove solo ID visibili, svuotare la selezione resta indipendente dai filtri', () => {
@@ -94,17 +125,16 @@ test('Deseleziona risultati rimuove solo ID visibili, svuotare la selezione rest
 
 test('Cambiare filtro non cambia la selezione; una selezione nuova ha un riferimento distinto', () => {
   const selectedIds = ['283813'];
-  filterCatalogProducts(products, { brandFilter: 'Alba' });
+  filterCatalogProducts(products, { searchQuery: 'Alba' });
   assert.deepEqual(selectedIds, ['283813']);
   assert.equal(selectFilteredIds(selectedIds, []), selectedIds);
-  assert.notEqual(selectFilteredIds(selectedIds, filterCatalogProducts(products, { brandFilter: 'Alba' })), selectedIds);
+  assert.notEqual(selectFilteredIds(selectedIds, filterCatalogProducts(products, { searchQuery: 'Alba' })), selectedIds);
 });
 
 test('Catalogo nuovo può ripartire con filtri e selezione vuoti senza mutare il precedente', () => {
-  const previous = { searchQuery: 'wally', categoryFilter: 'Casa > Profumi',
-    brandFilter: 'Wally', selectedIds: ['283813'] };
+  const previous = { searchQuery: 'wally', categoryFilter: 'Casa > Profumi', selectedIds: ['283813'] };
   const reset = resetCatalogControls();
-  assert.deepEqual(reset, { searchQuery: '', categoryFilter: '', brandFilter: '', selectedIds: [] });
+  assert.deepEqual(reset, { searchQuery: '', categoryFilter: '', selectedIds: [] });
   assert.deepEqual(ids(filterCatalogProducts(products, reset)), products.map(product => product.id));
   assert.deepEqual(previous.selectedIds, ['283813']);
 });
@@ -172,7 +202,7 @@ test('Checkbox singola aggiunge il nuovo risultato senza perdere tre selezioni f
 
 test('Pannello selezionati recupera tutti gli ID anche se il filtro corrente ne nasconde alcuni', () => {
   const selection = ['283813', '283815'];
-  const visible = filterCatalogProducts(products, { brandFilter: 'Alba' });
+  const visible = filterCatalogProducts(products, { searchQuery: 'Alba' });
   assert.deepEqual(ids(visible), ['283815', '']);
   assert.deepEqual(getSelectedProducts(products, selection).map(product => product.id), selection);
   assert.deepEqual(getSelectedProducts(products, []).map(product => product.id), []);

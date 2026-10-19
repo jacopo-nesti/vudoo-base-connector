@@ -167,7 +167,8 @@ for (const invalid of ['8056370403714-', '12345A7890123', '1234567', '1234567890
     assert.equal(current.source.ean, invalid);
     assert.equal(feed.eanWarnings.length, 1);
     assert.equal(feed.eanWarnings[0].originalEan, invalid);
-    const existing = { ...payload, ean: '8009513003852', images: { 1: current.image_link } };
+    const existing = { ...payload, ean: '8009513003852', images: Object.fromEntries(
+      Object.entries(payload.images ?? {}).map(([position, url]) => [Number(position) + 1, url.replace(/^url:/, '')])) };
     assert.equal(buildBaseUpdatePayload(current, existing, config), null);
   });
 }
@@ -262,12 +263,14 @@ test('[BLOCK] chiusura XML mancante viene rifiutata con posizione diagnostica', 
   assert.throws(() => prepareVudooCatalog(xml), /XML non valido.*riga/);
 });
 
-test('[CONTINUE] immagine principale valida inviata; assente omessa; immagini aggiuntive solo preservate', () => {
+test('[CONTINUE] immagine principale e aggiuntive disponibili vengono inviate in ordine', () => {
   const current = product();
-  assert.deepEqual(buildBasePayload(current, config).images, { 0: 'url:https://example.com/main.jpg' });
+  assert.deepEqual(buildBasePayload(current, config).images, { 0: 'url:https://example.com/main.jpg',
+    1: 'url:https://example.com/extra1.jpg', 2: 'url:https://example.com/extra2.jpg' });
   assert.equal(current.source.additional_image_link.length, 2);
   const missing = product({ 'g:image_link': null });
-  assert.equal(buildBasePayload(missing, config).images, undefined);
+  assert.deepEqual(buildBasePayload(missing, config).images,
+    { 1: 'url:https://example.com/extra1.jpg', 2: 'url:https://example.com/extra2.jpg' });
 });
 
 test('[BLOCK] URL immagine malformato conserva la policy attuale', () => {
@@ -312,12 +315,12 @@ test('[CONTINUE] catalogo con un solo item conserva il prodotto importabile', ()
   assert.equal(analyzeCatalogCategories(feed, mappings).importableProducts, 1);
 });
 
-test('[SKIP] catalogo composto solo da No name non consegna prodotti importabili', () => {
+test('[CONTINUE] No name con ID e dati validi resta importabile senza categoria', () => {
   const analysis = categoryAnalysis(item({ 'g:product_type': 'No name > No name' })
     + item({ 'g:id': null, 'g:product_type': null, 'g:price': 'non valido' }));
   assert.equal(analysis.totalProducts, 2);
   assert.equal(analysis.missingSourceCategoryProducts, 2);
   assert.equal(analysis.missingSourceCategoryUnrecordableProducts, 1);
-  assert.equal(analysis.importableProducts, 0);
+  assert.equal(analysis.importableProducts, 1);
   assert.equal(analysis.mappedProducts.length, 0);
 });

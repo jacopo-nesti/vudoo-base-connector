@@ -11,8 +11,6 @@ import {
   loadCategoryMappings,
   analyzeCatalogCategories,
   formatCategoryReport,
-  formatUnmappedCategoryError,
-  createSupplierDraft,
 } from './categoryNormalizer.js';
 import { recordNoNameProducts, noNameReportPath } from './noNameReport.js';
 import { sourceIdentity, selectedProducts, selectionSummary } from './productSelector.js';
@@ -40,6 +38,7 @@ function prepareVudooSources(parsed, requestedSources, options) {
   // Conserva tutti i record di un g:id scelto: la deduplicazione deve rilevare eventuali conflitti.
   const selectedSources = selectedProducts(parsed.products, new Set(requestedSources.map(sourceIdentity)));
   const catalog = prepareParsedVudooCatalog({ ...parsed, products: selectedSources }, options);
+  if (parsed.baseInventoryId != null) catalog.baseInventoryId = parsed.baseInventoryId;
   catalog.selection = selectionSummary(parsed.products, new Set(selectedSources.map(sourceIdentity)));
   const duplicates = [...catalog.duplicatesMap.values()].reduce((total, count) => total + count - 1, 0);
   log(`\n[VUDOO - CATALOGO]\nProdotti elaborati: ${catalog.products.length}\nSKU unici: ${catalog.uniqueProducts.length}\nDuplicati nel feed: ${duplicates}\nDRY_RUN: ${dryRun}; TEST_MODE: ${testMode}`);
@@ -89,39 +88,23 @@ export async function preflightPreparedVudooCatalog(catalog) {
   const categories = analyzeCatalogCategories(catalog, mappings);
   categories.policy = categoryPolicy;
   log(`\n${formatCategoryReport(categories)}`);
-  log(`Policy categorie non mappate: ${categoryPolicy.toUpperCase()}`);
-  log(`Prodotti esclusi per categoria reale non mappata: ${categories.unmappedValidCategoryProducts}\n`);
-
-  if (categories.supplierError) {
-    if (!catalog.channelTitle?.trim()) throw new Error(`IMPORT BLOCCATO: ${categories.supplierError} Impostare channel.title nel feed Vudoo.`);
-    const draft = await createSupplierDraft(categories, undefined, mappings);
-    if (categories.missingProducts.length) {
-      const recorded = await recordNoNameProducts(categories.missingProducts, draft.draft.supplier_id, catalog.channelTitle);
-      if (recorded) log(`Prodotti senza categoria registrati in: ${noNameReportPath}`);
-    }
-    if (!draft.created) {
-      throw new Error(`IMPORT BLOCCATO: nuovo supplier "${catalog.channelTitle}". File già presente e non modificato: ${draft.file}. Verifica i mapping e ripeti il preflight.`);
-    }
-    const autoMapped = draft.stats.supplier + draft.stats.canonical;
-    throw new Error(`IMPORT BLOCCATO: nuovo supplier "${catalog.channelTitle}".\nCategorie reali trovate: ${Object.keys(draft.draft.categories).length}\nAuto-mappate con certezza: ${autoMapped} (supplier: ${draft.stats.supplier}, base_path canonico: ${draft.stats.canonical})\nDa configurare manualmente: ${draft.stats.manual}\nFile creato: ${draft.file}\nVerifica i mapping, completa quelli null e ripeti il preflight.`);
-  }
+  log(`Categorie senza mapping Base.com: ${categories.withoutBaseCategoryProducts} prodotti (warning; category_id omesso).`);
+  if (categories.supplierError) log(`[WARNING CATEGORIE] ${categories.supplierError}`);
 
   if (categories.missingProducts.length) {
-    const recorded = await recordNoNameProducts(categories.missingProducts, categories.supplier.id, catalog.channelTitle);
+    const recorded = await recordNoNameProducts(categories.missingProducts, categories.supplier?.id ?? catalog.channelTitle, catalog.channelTitle);
     if (recorded) log(`Prodotti senza categoria registrati in: ${noNameReportPath}`);
   }
-  if (categoryPolicy === 'block' && categories.unmappedCount > 0) {
-    throw new Error(formatUnmappedCategoryError(categories, categoryPolicy));
-  }
-  const mappedProducts = categories.mappedProducts;
-  const mappedCatalog = {
+  const hasImportableIdentity = product => typeof product.id === 'string' && product.id.trim() &&
+    !product.categoryPlaceholder;
+  const importableCatalog = {
     ...catalog,
-    products: mappedProducts,
-    uniqueProducts: categories.mappedUniqueProducts,
+    products: categories.products.filter(hasImportableIdentity),
+    uniqueProducts: categories.uniqueProducts.filter(hasImportableIdentity),
     categoryAnalysis: categories,
   };
-  const preflight = mappedProducts.length > 0
-    ? await runPreflightCheck(mappedCatalog)
+  const preflight = importableCatalog.products.length > 0
+    ? await runPreflightCheck(importableCatalog)
     : {
         inventory: null,
         priceGroup: null,

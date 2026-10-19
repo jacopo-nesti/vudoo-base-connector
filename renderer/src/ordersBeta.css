@@ -1,0 +1,13 @@
+.order-search form { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.order-search .form-field { min-width: 230px; }
+.order-search p, .order-card p { color: var(--color-text-secondary); font-size: 12px; margin: 12px 0 0; }
+.order-result-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.order-result-heading span { color: var(--color-text-secondary); font-size: 12px; }
+.order-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.order-card h2 { font-size: 15px; margin: 0 0 14px; }
+.order-fields { margin: 0; display: grid; gap: 9px; }
+.order-fields > div { display: grid; grid-template-columns: minmax(130px, 40%) minmax(0, 1fr); gap: 10px; font-size: 12px; }
+.order-fields dt { color: var(--color-text-secondary); }
+.order-fields dd { margin: 0; overflow-wrap: anywhere; }
+.orders-beta .table { width: 100%; }
+@media (max-width: 900px) { .order-grid { grid-template-columns: 1fr; } }

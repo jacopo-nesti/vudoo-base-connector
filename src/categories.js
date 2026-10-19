@@ -7,6 +7,61 @@ function categoryKey(parent, name) {
   return `${parent}:${nameIdentity(name)}`;
 }
 
+/** Categories returned without inventory_id are available to every Inventory. */
+export function buildGlobalCategoryIndex(rows) {
+  if (!Array.isArray(rows)) throw new Error('getInventoryCategories: elenco globale non valido.');
+  const byId = new Map();
+  for (const row of rows) {
+    const id = Number(row?.category_id);
+    const parentId = Number(row?.parent_id ?? 0);
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(parentId) || parentId < 0 ||
+      typeof row?.name !== 'string' || !row.name.trim() || byId.has(id)) {
+      throw new Error('getInventoryCategories: categoria globale non valida o ID duplicato.');
+    }
+    byId.set(id, { categoryId: id, parentId, name: cleanName(row.name) });
+  }
+  const byPath = new Map();
+  const byName = new Map();
+  for (const row of byId.values()) {
+    const path = [];
+    const seen = new Set();
+    let current = row;
+    while (current) {
+      if (seen.has(current.categoryId)) throw new Error('getInventoryCategories: gerarchia ciclica.');
+      seen.add(current.categoryId);
+      path.unshift(current.name);
+      current = current.parentId ? byId.get(current.parentId) : null;
+      if (seen.size && path.length && current === undefined) throw new Error('getInventoryCategories: parent mancante.');
+    }
+    const entry = { ...row, path };
+    const pathKey = nameIdentity(path.join(' > '));
+    const nameKey = nameIdentity(row.name);
+    byPath.set(pathKey, [...(byPath.get(pathKey) ?? []), entry]);
+    byName.set(nameKey, [...(byName.get(nameKey) ?? []), entry]);
+  }
+  return { count: rows.length, byPath, byName };
+}
+
+export async function getGlobalCategoryIndex() {
+  const data = await callBase('getInventoryCategories');
+  return buildGlobalCategoryIndex(data.categories);
+}
+
+export function resolveGlobalCategoryPath(parts, index) {
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return { status: 'UNMAPPED_CATEGORY', categoryId: null, candidates: [] };
+  }
+  const path = parts.map(part => cleanName(part));
+  if (path.some(part => !part)) throw new Error('Percorso categoria con livello vuoto.');
+  const matches = index.byPath.get(nameIdentity(path.join(' > '))) ?? [];
+  if (matches.length === 1) return { status: 'GLOBAL_CATEGORY_MATCH', categoryId: matches[0].categoryId,
+    path: matches[0].path, candidates: [] };
+  const candidates = (matches.length ? matches : index.byName.get(nameIdentity(path.at(-1))) ?? [])
+    .map(entry => ({ categoryId: entry.categoryId, path: entry.path }));
+  return { status: matches.length > 1 ? 'AMBIGUOUS_CATEGORY_MAPPING' : 'UNRESOLVED_CATEGORY_MAPPING',
+    categoryId: null, path, candidates };
+}
+
 export async function getCategoryMap(inventoryId) {
   const data = await callBase('getInventoryCategories', { inventory_id: inventoryId });
   if (!Array.isArray(data.categories)) throw new Error('getInventoryCategories: elenco non valido.');

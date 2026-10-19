@@ -1,4 +1,4 @@
-const searchableFields = ['title', 'sku', 'id', 'brand', 'category', 'mpn', 'size', 'color'];
+const searchableFields = ['title', 'sku', 'id', 'brand', 'category', 'canonicalCategory', 'sourceCategory', 'supplier', 'mpn', 'ean', 'size', 'color'];
 
 export function hasDisplayValue(value) {
   return (typeof value === 'string' || typeof value === 'number') && String(value).trim() !== '';
@@ -24,17 +24,30 @@ export function filterOptions(products, field) {
   return [...values].sort((left, right) => left.localeCompare(right, 'it', { sensitivity: 'base' }));
 }
 
-export function filterCatalogProducts(products, { searchQuery = '', categoryFilter = '', brandFilter = '' } = {}) {
+export function filterCatalogProducts(products, { searchQuery = '', categoryFilter = '',
+  canonicalFilter = '', availabilityFilter = '', eanFilter = '', imageFilter = '',
+  sortBy = 'source' } = {}) {
   const query = searchQuery.trim().toLocaleLowerCase('it');
   const filtered = [];
   for (let index = 0; index < products.length; index++) {
     const product = products[index];
     if (categoryFilter && (typeof product.category === 'string' ? product.category.trim() : '') !== categoryFilter) continue;
-    if (brandFilter && (typeof product.brand === 'string' ? product.brand.trim() : '') !== brandFilter) continue;
+    if (canonicalFilter && product.canonicalCategory !== canonicalFilter) continue;
+    if (availabilityFilter && (product.quantity > 0 || String(product.availability).toLowerCase() === 'in stock' ? 'available' : 'unavailable') !== availabilityFilter) continue;
+    if (eanFilter && (product.basePreflight?.checks?.find(check => check.code === 'ean')?.status === 'WARNING' ? 'invalid' : product.ean ? 'present' : 'missing') !== eanFilter) continue;
+    if (imageFilter && (product.imageLink ? 'present' : 'missing') !== imageFilter) continue;
     if (query && !searchableFields.some(field =>
       String(product[field] ?? '').toLocaleLowerCase('it').includes(query))) continue;
     filtered.push({ product, index });
   }
+  const compare = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'it', { numeric: true, sensitivity: 'base' });
+  if (sortBy !== 'source') filtered.sort((left, right) => {
+    const a = left.product, b = right.product;
+    if (sortBy === 'price_asc') return (Number(a.price) || 0) - (Number(b.price) || 0) || left.index - right.index;
+    if (sortBy === 'price_desc') return (Number(b.price) || 0) - (Number(a.price) || 0) || left.index - right.index;
+    const field = sortBy === 'sku' ? 'sku' : sortBy === 'category' ? 'category' : 'title';
+    return compare(a[field], b[field]) || left.index - right.index;
+  });
   return filtered;
 }
 
@@ -92,5 +105,5 @@ export function isSelectionUndoShortcut(event) {
 }
 
 export function resetCatalogControls() {
-  return { searchQuery: '', categoryFilter: '', brandFilter: '', selectedIds: [] };
+  return { searchQuery: '', categoryFilter: '', selectedIds: [] };
 }

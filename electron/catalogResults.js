@@ -1,23 +1,38 @@
 export function toPreflightResult(preflight) {
   const categories = preflight.categoryAnalysis;
+  const globalCategoryPlans = preflight.categoryPlans ?? [];
+  const globalCategoryWarnings = [...new Map(globalCategoryPlans.filter(plan =>
+    ['UNRESOLVED_CATEGORY_MAPPING', 'AMBIGUOUS_CATEGORY_MAPPING'].includes(plan.status))
+    .map(plan => [plan.path.join(' > '), { status: plan.status, path: plan.path,
+      candidates: plan.candidates }])).values()];
   return {
     supplier: {
       id: categories.supplier?.id ?? null,
       sourceTitle: categories.channelTitle ?? null,
     },
     selection: preflight.selection,
+    tags: {
+      existing: [...new Set((preflight.tagPlans ?? []).flatMap(plan => plan.existing))],
+      wouldCreate: [...new Set((preflight.tagPlans ?? []).flatMap(plan => plan.wouldCreate))],
+      simulated: (preflight.tagPlans ?? []).some(plan => plan.simulated),
+      explicitProducts: preflight.tagPlans?.length ?? 0,
+    },
     products: {
       analyzed: categories.totalProducts,
       importable: categories.importableProducts,
       readyForBase: preflight.selectedProducts.length,
       missingSourceCategory: categories.missingSourceCategoryProducts,
       unmappedValidCategory: categories.unmappedValidCategoryProducts,
+      withoutBaseCategory: categories.withoutBaseCategoryProducts,
       feedDuplicates: preflight.feedDuplicates,
       eanWarnings: preflight.eanWarningsCount,
     },
     categories: {
       mapped: categories.mappedCount,
       unmapped: categories.unmappedCount,
+      globalCount: preflight.globalCategoryIndex?.count ?? null,
+      globalMatchedProducts: globalCategoryPlans.filter(plan => plan.status === 'GLOBAL_CATEGORY_MATCH').length,
+      globalWarnings: globalCategoryWarnings,
       entries: categories.entries.map(({ sourceCategory, canonicalCategory, basePath, count, status }) => ({
         sourceCategory,
         canonicalCategory: canonicalCategory ?? null,
@@ -55,9 +70,11 @@ export function toImportResult(result) {
     updated: result.updated,
     unchanged: result.unchanged,
     simulated: result.simulated,
+    simulatedSkus: result.simulatedSkus,
     feedDuplicates: result.feedDuplicates,
     errors: result.errors,
     errorSkus: result.errorSkus,
+    tagErrors: result.tagErrors,
     uncertainSkus: result.uncertainSkus,
     eanWarningsCount: result.eanWarningsCount,
     categorySummary: result.categorySummary,
