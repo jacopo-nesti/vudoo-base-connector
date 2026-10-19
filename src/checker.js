@@ -1,28 +1,6 @@
 import { token, testMode, dryRun, getBaseApiRequestsPerMinute, getUnmappedCategoryPolicy } from './config.js';
 import { log, redactToken } from './logger.js';
 import { getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi.js';
-import { getAmazonConfig } from './marketplaces/amazon/config.js';
-import { getAmazonAccessToken } from './marketplaces/amazon/auth.js';
-
-export async function runAmazonDiagnostic(options = {}) {
-  let config;
-  try {
-    config = getAmazonConfig(options.env);
-  } catch (error) {
-    return { ok: false, configured: false, authenticated: false, error: redactToken(error.message) };
-  }
-
-  const result = {
-    configured: true, authenticated: false,
-    environment: config.environment, region: config.region, endpoint: config.endpoint,
-  };
-  try {
-    await getAmazonAccessToken({ config, fetchImpl: options.fetchImpl, timeoutMs: options.timeoutMs });
-    return { ok: true, ...result, authenticated: true };
-  } catch (error) {
-    return { ok: false, ...result, error: redactToken(error.message) };
-  }
-}
 
 export async function runEnvironmentCheck() {
   log('========================================');
@@ -41,9 +19,9 @@ export async function runEnvironmentCheck() {
 
   // 1. Variabili d'ambiente
   if (token) {
-    report('BASE_API_TOKEN', true, '[TOKEN PRESENTE E NASCOSTO]');
+    report('BASE_API_TOKEN', true, 'Configurate');
   } else {
-    report('BASE_API_TOKEN', false, 'Mancante o vuoto nel file .env');
+    report('BASE_API_TOKEN', false, 'Non configurate');
   }
 
   const validTestMode = ['true', 'false'].includes(testMode);
@@ -59,7 +37,7 @@ export async function runEnvironmentCheck() {
   }
 
   try {
-    report('Categorie non mappate', true, getUnmappedCategoryPolicy().toUpperCase());
+    report('Categorie non mappate', true, `${getUnmappedCategoryPolicy().toUpperCase()} (legacy; Base.com usa warning)`);
   } catch (error) {
     report('Categorie non mappate', false, error.message);
   }

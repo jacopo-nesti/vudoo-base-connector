@@ -128,7 +128,7 @@ test('Override store rejects corrupt files instead of silently discarding persis
     await writeFile(filePath, '{ broken', 'utf8');
     await assert.rejects(loadProductOverrides(filePath), /JSON valido/);
     await writeFile(filePath, JSON.stringify({ version: 1, products: {
-      [productKey(companyCode, source.id)]: { price: 1 },
+      [productKey(companyCode, source.id)]: { unsupported_field: 1 },
     } }), 'utf8');
     await assert.rejects(loadProductOverrides(filePath), /dati non validi/);
   });

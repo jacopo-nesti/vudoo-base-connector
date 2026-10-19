@@ -1,7 +1,11 @@
 import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const noNameReportPath = 'reports/no_name_products.json';
-const defaultReportUrl = new URL('../reports/no_name_products.json', import.meta.url);
+const defaultReportUrl = process.env.VUDOO_REPORT_ROOT
+  ? pathToFileURL(path.join(process.env.VUDOO_REPORT_ROOT, 'no_name_products.json'))
+  : new URL('../reports/no_name_products.json', import.meta.url);
 let temporaryFileCounter = 0;
 const renameDelays = [100, 250, 500];
 

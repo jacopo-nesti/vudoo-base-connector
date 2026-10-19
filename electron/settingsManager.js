@@ -6,7 +6,7 @@ export const SETTINGS_FILE_NAME = 'settings.json';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   testMode: true,
-  dryRun: true,
+  dryRun: false,
   unmappedCategoryPolicy: 'block',
   vudooResultsLimit: 3000,
   vudooTimeoutMs: 90000,

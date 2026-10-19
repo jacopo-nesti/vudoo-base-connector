@@ -1,6 +1,8 @@
 import { token, testMode, dryRun } from './config.js';
-import { getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi.js';
+import { callBase, getBaseInventory, getBasePriceGroup, getBaseWarehouse } from './baseApi.js';
 import { getProducts, detectAndFilterDuplicates, normalizeProduct } from './products.js';
+import { createInventoryTagService, normalizeInventoryTagNames } from './inventoryTags.js';
+import { getGlobalCategoryIndex, resolveGlobalCategoryPath } from './categories.js';
 import { log } from './logger.js';
 
 export async function runPreflightCheck(catalog) {
@@ -8,7 +10,7 @@ export async function runPreflightCheck(catalog) {
 
   // 1. Verifica token e flag di configurazione
   if (!token) {
-    throw new Error('[PREFLIGHT] BASE_API_TOKEN mancante o vuoto nel file .env.');
+    throw new Error('[PREFLIGHT] Credenziali Base.com non configurate nel runtime.');
   }
 
   if (!['true', 'false'].includes(testMode) || !['true', 'false'].includes(dryRun)) {
@@ -32,6 +34,8 @@ export async function runPreflightCheck(catalog) {
   const deduplicated = catalog ?? detectAndFilterDuplicates(candidates);
   const { duplicatesMap } = deduplicated;
   const uniqueProducts = catalog && testMode === 'true' ? catalog.uniqueProducts.slice(0, 1) : deduplicated.uniqueProducts;
+  // Reject invalid tags before any later resource creation in the import path.
+  for (const product of uniqueProducts) normalizeInventoryTagNames(product?.tags);
 
   let feedDuplicates = 0;
   if (duplicatesMap && typeof duplicatesMap.values === 'function') {
@@ -41,7 +45,7 @@ export async function runPreflightCheck(catalog) {
   }
 
   // 4. Verifica risorse Base.com: Inventory di default e Price Group
-  const inventory = await getBaseInventory();
+  const inventory = await getBaseInventory(catalog?.baseInventoryId);
   if (!inventory) {
     throw new Error('[PREFLIGHT] Impossibile recuperare l\'inventory Default su Base.com.');
   }
@@ -69,6 +73,24 @@ export async function runPreflightCheck(catalog) {
     }
   }
 
+  const tagService = createInventoryTagService({ request: callBase, isSimulation: () => dryRun === 'true' });
+  const tagPlans = [];
+  for (const product of uniqueProducts) {
+    if (product?.tags == null) continue;
+    const plan = await tagService.ensureInventoryTags(product.tags);
+    tagPlans.push({ productId: product.id, ...plan,
+      status: plan.wouldCreate.length ? plan.simulated ? 'TAG_SIMULATED_CREATE' : 'TAG_MISSING_WILL_CREATE' : 'TAG_EXISTING' });
+  }
+  const globalCategoryIndex = uniqueProducts.some(product => product?.base_category_path?.length)
+    ? await getGlobalCategoryIndex() : null;
+  const categoryPlans = uniqueProducts.map(product => ({ productId: product.id,
+    ...resolveGlobalCategoryPath(product.base_category_path, globalCategoryIndex) }));
+  for (const plan of new Map(categoryPlans.filter(plan =>
+    plan.status === 'AMBIGUOUS_CATEGORY_MAPPING' || plan.status === 'UNRESOLVED_CATEGORY_MAPPING')
+    .map(plan => [plan.path.join(' > '), plan])).values()) {
+    log(`[WARNING CATEGORIA] ${plan.status}: ${plan.path.join(' > ')}; category_id omesso.`);
+  }
+
   log('[PREFLIGHT] Controlli preliminari completati con successo! ✅\n');
 
   return {
@@ -78,6 +100,10 @@ export async function runPreflightCheck(catalog) {
     products: rawProducts,
     selectedProducts: uniqueProducts,
     feedDuplicates,
-    normalizedProducts: Boolean(catalog)
+    normalizedProducts: Boolean(catalog),
+    tagPlans,
+    tagInventory: tagService.snapshot(),
+    categoryPlans,
+    globalCategoryIndex,
   };
 }

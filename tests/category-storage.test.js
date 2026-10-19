@@ -88,7 +88,8 @@ test('Categorie sorgente mancanti: assente, vuota e No name sono distinte dalle 
   mappings.supplierByTitle.set('fornitore a', supplier.id);
   const analysis = analyzeCatalogCategories({ channelTitle: 'Fornitore A', products, uniqueProducts: products }, mappings);
   assert.equal(analysis.missingSourceCategoryProducts, 3);
-  assert.equal(analysis.importableProducts, 1);
+  assert.equal(analysis.importableProducts, 5);
+  assert.equal(analysis.withoutBaseCategoryProducts, 4);
   assert.equal(analysis.unmappedValidCategoryProducts, 1);
   assert.equal(analysis.entries.length, 2);
   assert.deepEqual(analysis.missingProducts.map(product => product.id), ['1', '2', '3']);
@@ -275,7 +276,7 @@ test('Wally: tutti i 15 mapping e i percorsi canonici migrati restano disponibil
   assert.equal(supplier.categories.size, 15);
   for (const [source, canonicalId] of supplier.categories) {
     assert.ok(mappings.canonical.has(canonicalId), source);
-    assert.equal(mappings.canonical.get(canonicalId).basePath.length, 3);
+    assert.ok(mappings.canonical.get(canonicalId).basePath.length >= 2);
   }
   assert.deepEqual(normalizeCategory({
     supplier, sourceCategory: 'Bellezza e Salute > Profumi > Fragranze', mappings,

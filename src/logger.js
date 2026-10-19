@@ -9,9 +9,10 @@ export function registerSecret(value) {
 }
 
 export function redactToken(message) {
-  const secrets = [token, process.env.AMAZON_REFRESH_TOKEN,
-    process.env.AMAZON_LWA_CLIENT_ID, process.env.AMAZON_LWA_CLIENT_SECRET,
-    ...temporarySecrets].filter(value => typeof value === 'string' && value.length > 0);
+  const secrets = [token, ...Object.entries(process.env)
+    .filter(([key]) => /(?:TOKEN|SECRET|PASSWORD|CLIENT_ID)$/.test(key))
+    .map(([, value]) => value), ...temporarySecrets]
+    .filter(value => typeof value === 'string' && value.length > 0);
   return secrets.sort((a, b) => b.length - a.length)
     .reduce((text, secret) => text.replaceAll(secret, '[TOKEN NASCOSTO]'), String(message));
 }

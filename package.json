@@ -3,18 +3,20 @@
   "version": "1.4.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node --env-file=.env cli.js",
     "dev": "concurrently \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
     "dev:electron": "wait-on http://localhost:5173 && electron electron/main.js",
     "build": "vite build",
+    "dist:win": "npm run build && node tools/package-portable.mjs",
     "check": "node --env-file=.env check.js",
     "import": "node --env-file=.env tools/legacy/import-json.js",
     "sync": "node --env-file=.env tools/legacy/sync-json.js",
     "convert": "node tools/legacy/convert-json.js",
     "productor": "node --env-file=.env tools/legacy/productor-json.js",
-    "test": "node --experimental-vm-modules --test tests/integration-review.test.js tests/cli.test.js tests/vudoo-xml.test.js tests/category-normalizer.test.js tests/category-storage.test.js tests/catalog-hardening.test.js tests/product-selector.test.js tests/electron-settings.test.js tests/electron-write-guard.test.js tests/electron-product-overrides.test.js tests/import-timing.test.js tests/catalog-filters.test.js tests/etsy-categories.test.js tests/amazon.test.js"
+    "test": "node --experimental-vm-modules --test tests/integration-review.test.js tests/cli.test.js tests/vudoo-xml.test.js tests/category-normalizer.test.js tests/category-storage.test.js tests/catalog-hardening.test.js tests/product-selector.test.js tests/electron-settings.test.js tests/electron-write-guard.test.js tests/electron-product-overrides.test.js tests/import-timing.test.js tests/catalog-filters.test.js tests/product-workflow.test.js tests/enterprise-shell.test.js tests/enterprise-tables.test.js tests/problem-center.test.js tests/manufacturer-directory.test.js tests/manufacturer-inventory.test.js tests/manufacturer-inventory-routing.test.js tests/settings-ux.test.js tests/bulk-editor.test.js tests/base-effective-display.test.js tests/inventory-tags.test.js tests/global-categories.test.js tests/bulk-tags.test.js tests/manufacturers-page.test.js tests/dashboard-home.test.js tests/packaging.test.js tests/base-orders-beta.test.js"
   },
   "engines": {
     "node": ">=22"
@@ -29,8 +31,30 @@
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
     "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "^4.3.3",
     "vite": "^8.3.1",
     "wait-on": "^9.4.0"
+  },
+  "build": {
+    "appId": "com.vudoo.baseconnector",
+    "productName": "Vudoo Base Connector",
+    "asar": true,
+    "directories": { "output": "release" },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "renderer/dist/**/*",
+      "package.json",
+      "!**/*.test.*"
+    ],
+    "extraResources": [
+      { "from": "config/canonical-categories.json", "to": "config-defaults/canonical-categories.json" },
+      { "from": "config/suppliers", "to": "config-defaults/suppliers", "filter": ["*.json"] }
+    ],
+    "win": {
+      "target": [{ "target": "portable", "arch": ["x64"] }],
+      "artifactName": "Vudoo-Base-Connector-${version}-portable-${arch}.${ext}"
+    }
   }
 }

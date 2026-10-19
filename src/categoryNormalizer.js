@@ -1,7 +1,11 @@
 import { readFile, readdir, mkdir, open, unlink } from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { cleanName, nameIdentity } from './names.js';
 
-const configRoot = new URL('../config/', import.meta.url);
+const configRoot = process.env.VUDOO_CONFIG_ROOT
+  ? pathToFileURL(`${path.resolve(process.env.VUDOO_CONFIG_ROOT)}${path.sep}`)
+  : new URL('../config/', import.meta.url);
 
 function objectValue(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} deve essere un oggetto.`);
@@ -172,11 +176,13 @@ export function analyzeCatalogCategories(catalog, mappings) {
   const mapProduct = product => {
     const sourceCategory = product.product_type;
     const entry = isMissingSourceCategory(sourceCategory) ? null : byKey.get(nameIdentity(sourceCategory));
+    const selectedCanonical = entry?.mapped && product.canonical_category && mappings.canonical.has(product.canonical_category)
+      ? product.canonical_category : entry?.canonicalCategory;
     return entry?.mapped ? {
       ...product,
       source_category: sourceCategory,
-      canonical_category: entry.canonicalCategory,
-      base_category_path: [...entry.basePath],
+      canonical_category: selectedCanonical,
+      base_category_path: [...mappings.canonical.get(selectedCanonical).basePath],
     } : { ...product, source_category: sourceCategory };
   };
   const products = catalog.products.map(mapProduct);
@@ -186,6 +192,8 @@ export function analyzeCatalogCategories(catalog, mappings) {
   const mappedProducts = products.filter(isMapped);
   const unmappedProducts = products.filter(product => !isMapped(product) && !isMissing(product));
   const missingProducts = products.filter(isMissing);
+  const withoutBaseCategoryProducts = products.filter(product => !isMapped(product) &&
+    typeof product.id === 'string' && product.id.trim() && !product.categoryPlaceholder).length;
   const missingSourceCategoryUnrecordableProducts = missingProducts.filter(product =>
     typeof product.id !== 'string' || !product.id.trim()).length;
   return {
@@ -198,8 +206,10 @@ export function analyzeCatalogCategories(catalog, mappings) {
     unmappedCount: entries.filter(entry => !entry.mapped).length,
     missingSourceCategoryProducts,
     missingSourceCategoryUnrecordableProducts,
-    importableProducts: mappedProducts.length,
+    importableProducts: products.filter(product =>
+      typeof product.id === 'string' && product.id.trim() && !product.categoryPlaceholder).length,
     unmappedValidCategoryProducts: unmappedProducts.length,
+    withoutBaseCategoryProducts,
     products,
     uniqueProducts,
     mappedProducts,
@@ -215,7 +225,7 @@ export function formatCategoryReport(analysis) {
     '',
     `Supplier: ${analysis.supplier?.id ?? 'NON CONFIGURATO'}`,
     `Source title: ${analysis.channelTitle?.trim() || '(channel.title assente)'}`,
-    `Configurazione: ${analysis.supplier?.file ?? '(da generare)'}`,
+    `Configurazione: ${analysis.supplier?.file ?? '(non presente)'}`,
     '',
     `Prodotti totali feed: ${analysis.totalProducts}`,
     `Prodotti importabili: ${analysis.importableProducts}`,

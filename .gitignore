@@ -8,5 +8,7 @@ reports/no_name_products.json
 *.vs
 .history/
 renderer/dist/
-config/marketplaces/etsy/
+release/
 etsy-mapping/
+config/
+tools/legacy/

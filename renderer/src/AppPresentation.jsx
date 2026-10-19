@@ -1,13 +1,24 @@
+import { useRef, useState } from 'react';
+import CatalogSwitcher from './components/CatalogSwitcher.jsx';
+import SaveManufacturerDialog from './components/SaveManufacturerDialog.jsx';
 import AppShell from './components/AppShell.jsx';
 import CatalogPage from './pages/CatalogPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
+import HelpPage from './pages/HelpPage.jsx';
+import ManufacturersPage from './pages/ManufacturersPage.jsx';
 import OperationsPage from './pages/OperationsPage.jsx';
-import DiagnosticsPage from './pages/DiagnosticsPage.jsx';
-import ImportFlowPage from './pages/ImportFlowPage.jsx';
+import BaseDiagnosticsPage from './pages/BaseDiagnosticsPage.jsx';
+import OrdersBetaPage from './pages/OrdersBetaPage.jsx';
+import SystemDiagnostics from './pages/SystemDiagnostics.jsx';
+import ProblemsPage from './pages/ProblemsPage.jsx';
 import SettingsPanel from './SettingsPanel.jsx';
+import ImportFlowPage from './pages/ImportFlowPage.jsx';
 import { selectFilteredIds, deselectFilteredIds, clearSelectedIds } from './catalogFilters.js';
 
 export default function AppPresentation({ model: app }) {
+  const [catalogSwitcherOpen, setCatalogSwitcherOpen] = useState(false);
+  const [problemFocus, setProblemFocus] = useState(null);
+  const problemFocusSequence = useRef(0);
   const { page, setPage, importScope, catalog, selectedIds, filteredProducts, updateSelection,
     visibleSelectedCount, catalogBusy, importLoading, fullImportLoading, manufacturerSyncLoading } = app;
   const preflightResult = importScope === 'full' ? app.fullPreflightResult : app.preflightResult;
@@ -17,6 +28,14 @@ export default function AppPresentation({ model: app }) {
   const importError = importScope === 'full' ? app.fullImportError : app.importError;
   const activeImportLoading = importScope === 'full' ? fullImportLoading : importLoading;
   const navigate = next => { if (!importLoading && !fullImportLoading && !manufacturerSyncLoading) setPage(next); };
+  const openProblem = problem => {
+    if (problem.productId) {
+      setProblemFocus({ productId: problem.productId, requestId: ++problemFocusSequence.current });
+      app.setSearchQuery(problem.search || problem.productId);
+      app.setCategoryFilter(''); app.setBrandFilter(''); app.setExtraFilters({});
+    }
+    navigate(problem.page);
+  };
 
   function deselectFiltered() {
     if (!visibleSelectedCount || !window.confirm(`Vuoi deselezionare ${visibleSelectedCount} prodotti selezionati tra quelli visualizzati?`)) return;
@@ -28,23 +47,35 @@ export default function AppPresentation({ model: app }) {
     updateSelection(clearSelectedIds(selectedIds));
   }
 
-  return <AppShell page={page} onNavigate={navigate} supplier={catalog?.channelTitle} dryRunMode={app.dryRunMode}>
-    {page !== 'confirmation' && app.dryRunMode === true && <div className="alert alert-warning global-alert"><strong>Modalità simulazione attiva: nessuna modifica verrà scritta su Base.com.</strong></div>}
-    {page !== 'confirmation' && app.dryRunMode === false && <div className="alert alert-danger global-alert" role="alert"><strong>ATTENZIONE: modalità reale attiva. L’importazione può modificare Base.com.</strong></div>}
-    {app.dryRunMode === null && <div className="alert alert-danger global-alert" role="alert">Configurazione della modalità di importazione non valida. Controlla DRY_RUN nelle impostazioni e riavvia l’applicazione.</div>}
-    {app.dryRunMode === undefined && !app.runtimeModeError && <div className="alert alert-info global-alert">Verifica della modalità di importazione in corso…</div>}
-    {app.testModeEnabled === true && <div className="alert alert-info global-alert"><strong>Modalità test attiva: gli import di prodotti sono limitati dal backend.</strong></div>}
-    {app.testModeEnabled === null && <div className="alert alert-danger global-alert" role="alert">Configurazione della modalità test non valida. Controlla TEST_MODE nelle impostazioni e riavvia l’applicazione.</div>}
-    {app.runtimeModeError && <div className="alert alert-danger global-alert" role="alert">{app.runtimeModeError}</div>}
-
-    {page === 'overview' && <DashboardPage catalog={catalog} selectedCount={selectedIds.length} dryRunMode={app.dryRunMode} environment={app.environment} onNavigate={navigate} />}
-    {page === 'catalog' && <CatalogPage model={{
-      companyCode: app.companyCode, setCompanyCode: app.setCompanyCode, catalog,
+  const basePages = ['base-overview', 'base-manufacturers', 'base-catalog', 'base-operations', 'base-diagnostics', 'base-settings', 'preflight', 'confirmation', 'result'];
+  return <AppShell page={page} onNavigate={navigate} supplier={catalog?.manufacturerName || catalog?.channelTitle} dryRunMode={app.dryRunMode} onSetOperatingMode={app.handleSetOperatingMode} app={app} onCatalog={() => setCatalogSwitcherOpen(true)}>
+    <CatalogSwitcher open={catalogSwitcherOpen} app={app} onClose={() => setCatalogSwitcherOpen(false)} />
+    <SaveManufacturerDialog catalogCode={app.pendingManufacturerCode} onSave={app.handleSaveManufacturer} onClose={() => app.setPendingManufacturerCode(null)} />
+    {basePages.includes(page) && <>
+      {app.manufacturerDirectoryWarning && <div className="alert alert-warning global-alert" role="alert">{app.manufacturerDirectoryWarning}</div>}
+      {page !== 'confirmation' && page !== 'base-overview' && app.dryRunMode === true && <div className="alert alert-warning global-alert"><strong>MODALITÀ SIMULAZIONE: nessuna modifica verrà inviata a Base.com.</strong></div>}
+      {page !== 'confirmation' && app.dryRunMode === false && <div className="alert alert-danger global-alert" role="alert"><strong>ATTENZIONE: modalità reale attiva. L’importazione può modificare Base.com.</strong></div>}
+      {app.dryRunMode === null && <div className="alert alert-danger global-alert" role="alert">Configurazione della modalità di importazione non valida. Controlla DRY_RUN nelle impostazioni e riavvia l’applicazione.</div>}
+      {app.dryRunMode === undefined && !app.runtimeModeError && <div className="alert alert-info global-alert">Verifica della modalità di importazione in corso…</div>}
+      {app.testModeEnabled === true && <div className="alert alert-info global-alert"><strong>Limite di prova attivo: l’import elabora un solo prodotto. La modalità operativa resta {app.dryRunMode ? 'Simulazione' : 'Reale'}.</strong></div>}
+      {app.testModeEnabled === null && <div className="alert alert-danger global-alert" role="alert">Configurazione della modalità test non valida. Controlla TEST_MODE nelle impostazioni e riavvia l’applicazione.</div>}
+      {app.runtimeModeError && <div className="alert alert-danger global-alert" role="alert">{app.runtimeModeError}</div>}
+    </>}
+    {page === 'system-diagnostics' && <SystemDiagnostics app={app} />}
+    {page === 'system-problems' && <ProblemsPage app={app} onOpen={openProblem} onCatalog={() => setCatalogSwitcherOpen(true)} />}
+    {page === 'system-settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni</h1><p>Configurazione locale Vudoo e Base.com.</p></div></div><SettingsPanel scope="all" dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} /></div>}
+    {page === 'system-help' && <HelpPage />}
+    {page === 'base-overview' && <DashboardPage catalog={catalog} dryRunMode={app.dryRunMode} baseConfigured={app.baseConfigured} onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
+    {page === 'base-manufacturers' && <ManufacturersPage onNavigate={navigate} />}
+    {page === 'base-catalog' && <CatalogPage model={{
+      problemFocus, onProblemFocusHandled: () => setProblemFocus(null),
+      companyCode: app.companyCode, setCompanyCode: app.setCompanyCode, activeCatalogCode: app.activeCatalogCode, catalog,
       catalogLoading: app.catalogLoading, catalogError: app.catalogError, catalogBusy,
-      onFetch: app.handleFetchCatalog, searchQuery: app.searchQuery, setSearchQuery: app.setSearchQuery,
+      onCatalog: () => setCatalogSwitcherOpen(true), onFetch: app.handleFetchCatalog, searchQuery: app.searchQuery, setSearchQuery: app.setSearchQuery,
       categoryFilter: app.categoryFilter, setCategoryFilter: app.setCategoryFilter,
-      brandFilter: app.brandFilter, setBrandFilter: app.setBrandFilter,
-      categories: app.categories, brands: app.brands, filteredProducts,
+      categories: app.categories, canonicalCategories: app.canonicalCategories,
+      extraFilters: app.extraFilters, setExtraFilters: app.setExtraFilters,
+      filteredProducts,
       selectedIds, selectedIdSet: app.selectedIdSet, selectedProducts: app.selectedProducts,
       visibleSelectedCount, selectableVisibleCount: app.selectableVisibleCount,
       hasActiveFilters: app.hasActiveFilters, onToggle: app.handleToggleProduct,
@@ -52,11 +83,14 @@ export default function AppPresentation({ model: app }) {
       onDeselectFiltered: deselectFiltered, onClearSelection: clearSelection,
       onUndo: app.undoLastSelectionChange, canUndo: app.previousSelectedIds !== null,
       onPreflightSelected: app.handlePreflightSelected, preflightLoading: app.preflightLoading,
-      onSaveProduct: app.handleSaveProductOverride,
+      onSaveProduct: app.handleSaveProductFields,
+      onBulkEditProducts: app.handleBulkEditProducts,
+      onSelectInventory: app.handleSelectInventory, onRetryInventory: app.handleRetryInventory,
     }} />}
-    {page === 'operations' && <OperationsPage catalog={catalog} selectedCount={selectedIds.length} catalogBusy={catalogBusy} dryRunMode={app.dryRunMode} fullPreflightLoading={app.fullPreflightLoading} preflightLoading={app.preflightLoading} manufacturerSyncLoading={manufacturerSyncLoading} manufacturerSyncError={app.manufacturerSyncError} manufacturerSyncResult={app.manufacturerSyncResult} onPreflightFull={app.handlePreflightFull} onPreflightSelected={app.handlePreflightSelected} onSync={app.handleManufacturerSync} onCatalog={() => navigate('catalog')} />}
-    {page === 'settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni</h1><p>Configura le modalità operative e i limiti dell’integrazione.</p></div></div><SettingsPanel /></div>}
-    {page === 'diagnostics' && <DiagnosticsPage environment={app.environment} loading={app.loading} error={app.environmentError} response={app.response} onEnvironmentCheck={app.handleEnvironmentCheck} onPing={app.handlePing} amazonDiagnostic={app.amazonDiagnostic} amazonLoading={app.amazonDiagnosticLoading} amazonError={app.amazonDiagnosticError} onAmazonDiagnostic={app.handleAmazonDiagnostic} />}
-    {['preflight', 'confirmation', 'result'].includes(page) && <ImportFlowPage stage={page} scope={importScope} result={page === 'result' ? importResult : preflightResult} preflightError={preflightError} importError={importError} preflightLoading={preflightLoading} importLoading={activeImportLoading} catalog={catalog} selectedCount={selectedIds.length} dryRunMode={app.dryRunMode} testModeEnabled={app.testModeEnabled} baseApiRequestsPerMinute={app.baseApiRequestsPerMinute} importReadStrategy={app.importReadStrategy} onBack={() => setPage(page === 'confirmation' ? 'preflight' : 'operations')} onContinue={() => setPage('confirmation')} onImport={importScope === 'full' ? app.handleImportFull : app.handleImportSelected} onCatalog={() => navigate('catalog')} />}
+    {page === 'base-operations' && <OperationsPage catalog={catalog} selectedCount={selectedIds.length} catalogBusy={catalogBusy} dryRunMode={app.dryRunMode} fullPreflightLoading={app.fullPreflightLoading} preflightLoading={app.preflightLoading} manufacturerSyncLoading={manufacturerSyncLoading} manufacturerSyncError={app.manufacturerSyncError} manufacturerSyncResult={app.manufacturerSyncResult} onPreflightFull={app.handlePreflightFull} onPreflightSelected={app.handlePreflightSelected} onSync={app.handleManufacturerSync} onCatalog={() => navigate('base-catalog')} />}
+    {page === 'base-settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni Base.com</h1><p>Modalità e limiti dell'importazione.</p></div></div><SettingsPanel scope="base" dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} /></div>}
+    {page === 'base-diagnostics' && <BaseDiagnosticsPage catalog={catalog} catalogCode={app.activeCatalogCode} />}
+    {page === 'base-orders' && <OrdersBetaPage />}
+    {['preflight', 'confirmation', 'result'].includes(page) && <ImportFlowPage stage={page} scope={importScope} result={page === 'result' ? importResult : preflightResult} preflightError={preflightError} importError={importError} preflightLoading={preflightLoading} importLoading={activeImportLoading} catalog={catalog} selectedCount={selectedIds.length} dryRunMode={app.dryRunMode} testModeEnabled={app.testModeEnabled} baseApiRequestsPerMinute={app.baseApiRequestsPerMinute} importReadStrategy={app.importReadStrategy} onBack={() => setPage(page === 'confirmation' ? 'preflight' : 'base-operations')} onContinue={() => setPage('confirmation')} onImport={importScope === 'full' ? app.handleImportFull : app.handleImportSelected} onCatalog={() => navigate('base-catalog')} />}
   </AppShell>;
 }

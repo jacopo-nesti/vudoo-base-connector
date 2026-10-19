@@ -1,3 +1,4 @@
+import { notifyOperation } from './operationNotifications.js';
 import { useEffect, useMemo, useState } from "react";
 import AppPresentation from "./AppPresentation.jsx";
 import {
@@ -14,27 +15,28 @@ function App() {
     const [environment, setEnvironment] = useState(null);
     const [loading, setLoading] = useState(false);
     const [environmentError, setEnvironmentError] = useState("");
-    const [amazonDiagnostic, setAmazonDiagnostic] = useState(null);
-    const [amazonDiagnosticLoading, setAmazonDiagnosticLoading] = useState(false);
-    const [amazonDiagnosticError, setAmazonDiagnosticError] = useState("");
     const [dryRunMode, setDryRunMode] = useState(undefined);
     const [testModeEnabled, setTestModeEnabled] = useState(undefined);
     const [baseApiRequestsPerMinute, setBaseApiRequestsPerMinute] = useState(null);
     const [importReadStrategy, setImportReadStrategy] = useState(null);
     const [runtimeModeError, setRuntimeModeError] = useState("");
+    const [baseConfigured, setBaseConfigured] = useState(undefined);
 
     // Vudoo catalog
     const [companyCode, setCompanyCode] = useState("");
     const [catalog, setCatalog] = useState(null);
+    const [activeCatalogCode, setActiveCatalogCode] = useState('');
     const [catalogLoading, setCatalogLoading] = useState(false);
     const [catalogError, setCatalogError] = useState("");
+    const [manufacturerDirectoryWarning, setManufacturerDirectoryWarning] = useState('');
+    const [pendingManufacturerCode, setPendingManufacturerCode] = useState(null);
 
     // Product selection and preflight
     const [selectedIds, setSelectedIds] = useState([]);
     const [previousSelectedIds, setPreviousSelectedIds] = useState(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [categoryFilter, setCategoryFilter] = useState("");
-    const [brandFilter, setBrandFilter] = useState("");
+    const [extraFilters, setExtraFilters] = useState({});
     const [preflightResult, setPreflightResult] = useState(null);
     const [preflightLoading, setPreflightLoading] = useState(false);
     const [preflightError, setPreflightError] = useState("");
@@ -50,15 +52,15 @@ function App() {
     const [manufacturerSyncResult, setManufacturerSyncResult] = useState(null);
     const [manufacturerSyncLoading, setManufacturerSyncLoading] = useState(false);
     const [manufacturerSyncError, setManufacturerSyncError] = useState("");
-    const [page, setPage] = useState('overview');
+    const [page, setPage] = useState('base-overview');
     const [importScope, setImportScope] = useState('selected');
     const catalogBusy = catalogLoading || preflightLoading || importLoading ||
         fullPreflightLoading || fullImportLoading || manufacturerSyncLoading;
     const categories = useMemo(() => filterOptions(catalog?.products ?? [], 'category'), [catalog]);
-    const brands = useMemo(() => filterOptions(catalog?.products ?? [], 'brand'), [catalog]);
+    const canonicalCategories = useMemo(() => filterOptions(catalog?.products ?? [], 'canonicalCategory'), [catalog]);
     const filteredProducts = useMemo(() => filterCatalogProducts(catalog?.products ?? [], {
-        searchQuery, categoryFilter, brandFilter,
-    }), [catalog, searchQuery, categoryFilter, brandFilter]);
+        searchQuery, categoryFilter, ...extraFilters,
+    }), [catalog, searchQuery, categoryFilter, extraFilters]);
     const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
     const selectedProducts = useMemo(() => getSelectedProducts(catalog?.products ?? [], selectedIds),
         [catalog, selectedIds]);
@@ -67,7 +69,8 @@ function App() {
     [filteredProducts, selectedIdSet]);
     const selectableVisibleCount = useMemo(() => new Set(filteredProducts
         .map(({ product }) => product.id).filter(isSelectableId)).size, [filteredProducts]);
-    const hasActiveFilters = Boolean(searchQuery.trim() || categoryFilter || brandFilter);
+    const hasActiveFilters = Boolean(searchQuery.trim() || categoryFilter ||
+        Object.entries(extraFilters).some(([key, value]) => key !== 'sortBy' && value));
 
     useEffect(() => {
         if (!window.electronAPI?.getRuntimeMode) {
@@ -83,6 +86,7 @@ function App() {
                     setBaseApiRequestsPerMinute(Number.isSafeInteger(mode?.baseApiRequestsPerMinute)
                         ? mode.baseApiRequestsPerMinute : null);
                     setImportReadStrategy(mode?.importReadStrategy ?? null);
+                    setBaseConfigured(typeof mode?.baseConfigured === 'boolean' ? mode.baseConfigured : undefined);
                 }
             })
             .catch(() => {
@@ -90,6 +94,21 @@ function App() {
             });
         return () => { active = false; };
     }, []);
+
+    async function handleSetOperatingMode(mode) {
+        if (!window.electronAPI?.setOperatingMode) return { ok: false, code: 'unavailable' };
+        try {
+            const response = await window.electronAPI.setOperatingMode(mode);
+            if (response?.ok && typeof response.dryRun === 'boolean') {
+                setDryRunMode(response.dryRun);
+                setRuntimeModeError('');
+                if (catalog) await handleRetryInventory().catch(() => {});
+            }
+            return response;
+        } catch {
+            return { ok: false, code: 'storageError' };
+        }
+    }
 
     useEffect(() => {
         function handleKeyDown(event) {
@@ -120,29 +139,27 @@ function App() {
         }
     }
 
-    async function handleAmazonDiagnostic() {
-        setAmazonDiagnosticLoading(true);
-        setAmazonDiagnosticError("");
-        setAmazonDiagnostic(null);
-        try {
-            setAmazonDiagnostic(await window.electronAPI.diagnoseAmazon());
-        } catch {
-            setAmazonDiagnosticError("Impossibile eseguire la verifica Amazon.");
-        } finally {
-            setAmazonDiagnosticLoading(false);
-        }
-    }
-
-    async function handleFetchCatalog() {
+    async function handleFetchCatalog(requestedCode = companyCode) {
+        const code = String(requestedCode).trim();
+        if (!code || catalogBusy) return false;
         setCatalogLoading(true)
         setCatalogError("")
-        setCatalog(null)
-        const reset = resetCatalogControls()
-        setSelectedIds(reset.selectedIds)
+        try {
+        const result = await window.electronAPI.fetchCatalog(code)
+        const changedCatalog = code !== activeCatalogCode;
+        const availableIds = new Set(result?.products?.map(product => product.id) ?? []);
+        setActiveCatalogCode(code)
+        setCompanyCode(code)
+        if (changedCatalog) {
+            const reset = resetCatalogControls()
+            setSelectedIds(reset.selectedIds)
+            setSearchQuery(reset.searchQuery)
+            setCategoryFilter(reset.categoryFilter)
+            setExtraFilters({})
+        } else {
+            setSelectedIds(current => current.filter(id => availableIds.has(id)))
+        }
         setPreviousSelectedIds(null)
-        setSearchQuery(reset.searchQuery)
-        setCategoryFilter(reset.categoryFilter)
-        setBrandFilter(reset.brandFilter)
         setPreflightResult(null)
         setPreflightError("")
         setImportResult(null)
@@ -154,14 +171,48 @@ function App() {
         setManufacturerSyncResult(null)
         setManufacturerSyncError("")
 
-        try {
-            const result = await window.electronAPI.fetchCatalog(companyCode)
             setCatalog(result)
+            setManufacturerDirectoryWarning(result.manufacturerDirectoryStatus === 'unavailable'
+                ? 'Anagrafica locale non disponibile. Il catalogo Vudoo è stato caricato normalmente.' : '');
+            setPendingManufacturerCode(result.manufacturerDirectoryStatus === 'needs_name' ? code : null);
+            notifyOperation('catalogLoaded');
+            return true;
         } catch (error) {
             setCatalogError(error.message)
+            notifyOperation('catalogFailed');
+            return false;
         } finally {
             setCatalogLoading(false)
         }
+    }
+
+    async function handleSaveManufacturer(catalogCode, name) {
+        if (catalogCode !== activeCatalogCode) throw new Error('Catalogo attivo cambiato. Ricarica il catalogo.');
+        const response = await window.electronAPI.saveManufacturer({ catalogCode, name });
+        if (!response?.ok) {
+            throw new Error(response?.code === 'invalidValue' ? 'Inserisci un nome produttore valido.'
+                : 'Impossibile salvare il produttore nell’anagrafica locale. Puoi continuare a usare il catalogo.');
+        }
+        setCatalog(current => current && ({ ...current, manufacturerName: response.manufacturer.name,
+            inventoryStatus: response.inventoryStatus }));
+        setPendingManufacturerCode(null);
+    }
+
+    async function handleSelectInventory(inventoryId) {
+        const response = await window.electronAPI.selectManufacturerInventory(inventoryId);
+        if (!response?.ok) throw new Error(response?.inventoryStatus?.message || 'Inventory non selezionabile. Ripeti la verifica.');
+        setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
+    }
+
+    async function handleRetryInventory() {
+        const response = await window.electronAPI.retryManufacturerInventory();
+        if (!response?.ok) throw new Error('Verifica Inventory non riuscita.');
+        setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
+    }
+
+    function handleSettingsModeChanged(nextDryRun) {
+        setDryRunMode(nextDryRun);
+        if (catalog) void handleRetryInventory().catch(() => {});
     }
 
     async function handleSaveProductOverride(input) {
@@ -180,6 +231,27 @@ function App() {
         setFullImportResult(null);
         setFullImportError('');
         return response.product;
+    }
+
+    async function handleSaveProductFields(input) {
+        const response = await window.electronAPI.saveProductFields(input);
+        if (!response?.ok || !response.product) throw new Error(response?.error || 'Impossibile salvare il prodotto.');
+        setCatalog(current => current && ({ ...current, products: current.products.map(product =>
+            product.id === response.product.id ? response.product : product) }));
+        invalidateSelectedResults(); setFullPreflightResult(null); setFullImportResult(null);
+        return response.product;
+    }
+
+    async function handleBulkEditProducts(input) {
+        const response = await window.electronAPI.bulkEditProducts(input);
+        if (!response?.ok || !Array.isArray(response.products)) throw new Error(response?.error || 'Modifica massiva non riuscita.');
+        const updated = new Map(response.products.map(product => [product.id, product]));
+        setCatalog(current => current && ({ ...current, products: current.products.map(product => {
+            const next = updated.get(product.id);
+            return next ?? product;
+        }) }));
+        invalidateSelectedResults(); setFullPreflightResult(null); setFullImportResult(null);
+        return response.changedCount ?? response.products.length;
     }
 
     function updateSelection(nextIds) {
@@ -224,6 +296,7 @@ function App() {
                 throw new Error(response?.error || "Risposta non valida durante i controlli preliminari.");
             }
             setPreflightResult(response.result);
+            if (response.inventoryStatus) setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
         } catch (error) {
             setPreflightError(error?.message ?? String(error));
         } finally {
@@ -257,6 +330,7 @@ function App() {
                 throw new Error(response?.error || "Risposta non valida dal processo principale.");
             }
             setImportResult(response.result);
+            if (response.inventoryStatus) setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
             if (!response.result.ok) {
                 setImportError(response.result.preflightError
                     ? `Controlli preliminari non superati: ${response.result.preflightError}`
@@ -283,6 +357,7 @@ function App() {
                 throw new Error(response?.error || "Risposta non valida durante i controlli preliminari.");
             }
             setFullPreflightResult(response.result);
+            if (response.inventoryStatus) setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
         } catch (error) {
             setFullPreflightError(error?.message ?? "Controlli preliminari non riusciti.");
         } finally {
@@ -298,7 +373,7 @@ function App() {
         const confirmed = window.confirm(
             `Catalogo caricato: ${catalog.totalProducts} prodotti.\n` +
             `Prodotti pronti dopo i controlli: ${fullPreflightResult.products.readyForBase}.\n` +
-            (testModeEnabled ? "Modalità test attiva: l'import dei prodotti è limitato dal backend.\n" : "") +
+            (testModeEnabled ? "Limite di prova attivo: l'import elabora un solo prodotto.\n" : "") +
             `${modeDescription}\nVuoi avviare l'importazione completa?`
         );
         if (!confirmed) return;
@@ -315,6 +390,7 @@ function App() {
                 throw new Error(response?.error || "Risposta non valida dal processo principale.");
             }
             setFullImportResult(response.result);
+            if (response.inventoryStatus) setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
             if (!response.result.ok) {
                 setFullImportError(response.result.preflightError
                     ? `Controlli preliminari non superati: ${response.result.preflightError}`
@@ -353,14 +429,17 @@ function App() {
     }
 
   return <AppPresentation model={{
-    page, setPage, importScope,
+    page, setPage, importScope, baseConfigured,
     response, handlePing, environment, environmentError, loading, handleEnvironmentCheck,
-    amazonDiagnostic, amazonDiagnosticLoading, amazonDiagnosticError, handleAmazonDiagnostic,
-    dryRunMode, testModeEnabled, baseApiRequestsPerMinute, importReadStrategy, runtimeModeError,
-    companyCode, setCompanyCode, catalog, catalogLoading, catalogError, catalogBusy, handleFetchCatalog,
-    handleSaveProductOverride,
+    dryRunMode, handleSetOperatingMode, setDryRunMode, handleSettingsModeChanged,
+    testModeEnabled, baseApiRequestsPerMinute, importReadStrategy, runtimeModeError,
+    companyCode, setCompanyCode, activeCatalogCode, catalog, catalogLoading, catalogError, catalogBusy, handleFetchCatalog,
+    manufacturerDirectoryWarning, pendingManufacturerCode, setPendingManufacturerCode, handleSaveManufacturer,
+    handleSelectInventory, handleRetryInventory,
+    handleSaveProductOverride, handleSaveProductFields, handleBulkEditProducts,
     selectedIds, previousSelectedIds, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter,
-    brandFilter, setBrandFilter, categories, brands, filteredProducts, selectedIdSet,
+    categories, canonicalCategories,
+    extraFilters, setExtraFilters, filteredProducts, selectedIdSet,
     selectedProducts, visibleSelectedCount, selectableVisibleCount, hasActiveFilters,
     updateSelection, undoLastSelectionChange, handleToggleProduct,
     preflightResult, preflightLoading, preflightError, importResult, importLoading, importError,

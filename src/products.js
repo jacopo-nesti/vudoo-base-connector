@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { normalizeInventoryTagNames } from './inventoryTags.js';
 
 export async function getProducts() {
   const content = await readFile(new URL('../real_products.json', import.meta.url), 'utf8');
@@ -170,6 +171,18 @@ export function buildBasePayload(product, config) {
     }
     payload.images = { '0': `url:${product.image_link}` };
   }
+  const additional = product.additional_image_link == null ? []
+    : Array.isArray(product.additional_image_link) ? product.additional_image_link : [product.additional_image_link];
+  if (additional.length > 15) throw new Error('Base.com supporta fino a 15 immagini aggiuntive.');
+  for (const [index, image] of additional.entries()) {
+    if (typeof image !== 'string' || !URL.canParse(image) ||
+        !['http:', 'https:'].includes(new URL(image).protocol) || image.length > 1000) {
+      throw new Error(`Immagine aggiuntiva ${index + 1}: URL HTTP/HTTPS non valido.`);
+    }
+    payload.images ??= {};
+    payload.images[String(index + 1)] = `url:${image}`;
+  }
+  if (product.tags != null) payload.tags = normalizeInventoryTagNames(product.tags);
   return payload;
 }
 
@@ -263,11 +276,16 @@ export function buildBaseUpdatePayload(product, existing, config) {
     }
     if (Object.keys(values).length) changes[field] = values;
   }
+  if (desired.tags && JSON.stringify(desired.tags) !== JSON.stringify(existing.tags ?? [])) changes.tags = desired.tags;
   if (desired.images) {
-    const current = existing.images?.['1'];
-    const url = typeof current === 'string' ? current.replace(/^url:/, '') : '';
-    const isBaseImage = URL.canParse(url) && new URL(url).hostname === 'upload.cdn.baselinker.com';
-    if (!isBaseImage && url !== product.image_link) changes.images = desired.images;
+    const images = {};
+    for (const [position, value] of Object.entries(desired.images)) {
+      const current = existing.images?.[String(Number(position) + 1)];
+      const url = typeof current === 'string' ? current.replace(/^url:/, '') : '';
+      const isBaseImage = URL.canParse(url) && new URL(url).hostname === 'upload.cdn.baselinker.com';
+      if (!isBaseImage && url !== value.replace(/^url:/, '')) images[position] = value;
+    }
+    if (Object.keys(images).length) changes.images = images;
   }
   return Object.keys(changes).length ? { inventory_id: desired.inventory_id, ...changes } : null;
 }

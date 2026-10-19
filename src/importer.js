@@ -2,11 +2,12 @@ import { token, testMode, dryRun } from './config.js';
 import { log, redactToken } from './logger.js';
 import {
   sendProductToBase, findProductInBase, getBaseProductDetails, updateProductInBase,
-  getBaseProductSummaries, getBaseProductsData,
+  getBaseProductSummaries, getBaseProductsData, callBase,
 } from './baseApi.js';
+import { createInventoryTagService } from './inventoryTags.js';
 import { normalizeProduct, buildBasePayload, hasProductChanged, assertVudooSkuCompatibility } from './products.js';
 import { getManufacturerMap, ensureManufacturer } from './manufacturers.js';
-import { getCategoryMap, ensureCategoryPath } from './categories.js';
+import { getGlobalCategoryIndex, resolveGlobalCategoryPath } from './categories.js';
 import { runPreflightCheck } from './preflight.js';
 
 export const BULK_LOOKUP_THRESHOLD = 50;
@@ -26,6 +27,8 @@ export async function runImport(prepared) {
   let errors = 0;
   let feedDuplicates = 0;
   const errorSkus = [];
+  const tagErrors = [];
+  const simulatedSkus = [];
   const uncertainSkus = [];
   let warehouseStatus = 'non selezionato';
   let preflightError = null;
@@ -42,9 +45,11 @@ export async function runImport(prepared) {
     updated,
     unchanged: skipped,
     simulated,
+    simulatedSkus: [...simulatedSkus],
     feedDuplicates,
     errors,
     errorSkus: [...errorSkus],
+    tagErrors: [...tagErrors],
     uncertainSkus: [...uncertainSkus],
     eanWarningsCount: preflightData?.eanWarningsCount ?? 0,
     categorySummary: preflightData?.categoryAnalysis ? {
@@ -53,6 +58,7 @@ export async function runImport(prepared) {
       missingSourceCategoryProducts: preflightData.categoryAnalysis.missingSourceCategoryProducts,
       missingSourceCategoryUnrecordableProducts: preflightData.categoryAnalysis.missingSourceCategoryUnrecordableProducts,
       unmappedValidCategoryProducts: preflightData.categoryAnalysis.unmappedValidCategoryProducts,
+      withoutBaseCategoryProducts: preflightData.categoryAnalysis.withoutBaseCategoryProducts,
       unmappedCategories: preflightData.categoryAnalysis.unmappedCount,
     } : null,
     durationMs: Math.max(0, Date.now() - startedAt),
@@ -81,12 +87,13 @@ export async function runImport(prepared) {
     read = products.length;
     const selected = preflightData.selectedProducts;
     selectedCount = selected.length;
+    const tagService = createInventoryTagService({ request: callBase, isSimulation: () => dryRun === 'true',
+      initialTags: preflightData.tagInventory });
 
     // Recupero mappe Categorie e Produttori
     const mfgMap = selected.length > 0 ? await getManufacturerMap() : new Map();
-    const categoryMap = selected.length > 0 && selected.some(product => product?.base_category_path?.length || product?.product_type)
-      ? await getCategoryMap(config.inventory.inventory_id)
-      : new Map();
+    const globalCategoryIndex = preflightData.globalCategoryIndex ??
+      (selected.some(product => product?.base_category_path?.length) ? await getGlobalCategoryIndex() : null);
 
     let productsBySku = null;
     let detailsById = null;
@@ -127,10 +134,19 @@ export async function runImport(prepared) {
         }
         if (existingDetails) assertVudooSkuCompatibility(product, existingDetails);
 
-        const categoryPath = product.base_category_path ?? product.product_type;
-        const categoryId = await ensureCategoryPath(categoryPath, config.inventory.inventory_id, categoryMap);
+        const tagPlan = await tagService.ensureInventoryTags(product.tags, { allowCreate: true });
+        if (tagPlan.names !== undefined) product.tags = tagPlan.names;
+        if (tagPlan.wouldCreate.length) log(`[DRY_RUN] Product Tags da creare: ${tagPlan.wouldCreate.join(', ')}`);
+
+        const categoryPath = product.base_category_path;
+        const categoryPlan = resolveGlobalCategoryPath(categoryPath, globalCategoryIndex);
+        const categoryId = categoryPlan.categoryId;
+        if (categoryPath?.length && categoryId == null) {
+          log(`[WARNING CATEGORIA] ${categoryPlan.status}: ${categoryPath.join(' > ')}; category_id omesso.`);
+        }
         const manufacturerId = await ensureManufacturer(product.brand, mfgMap);
 
+        delete product.category_id;
         if (categoryId != null) product.category_id = categoryId;
         if (manufacturerId != null) product.manufacturer_id = manufacturerId;
 
@@ -144,6 +160,7 @@ export async function runImport(prepared) {
             const result = await updateProductInBase(existingProduct.product_id, product, config, existingDetails);
             if (!result) {
               simulated++;
+              simulatedSkus.push(product.sku);
               continue;
             }
             updated++;
@@ -151,6 +168,7 @@ export async function runImport(prepared) {
           } else {
             if (pendingReferences) {
               simulated++;
+              simulatedSkus.push(product.sku);
               continue;
             }
             skipped++;
@@ -162,6 +180,7 @@ export async function runImport(prepared) {
         const result = await sendProductToBase(product, config);
         if (!result) {
           simulated++;
+          simulatedSkus.push(product.sku);
           continue;
         }
         created++;
@@ -175,6 +194,10 @@ export async function runImport(prepared) {
         }
         errors++;
         errorSkus.push(sourceProduct?.id ?? '(SKU assente)');
+        if (error.code?.startsWith('TAG_')) tagErrors.push({
+          sku: sourceProduct?.id ?? '(SKU assente)', code: error.code,
+          tagName: error.tagName ?? null, message: redactToken(error.message),
+        });
         log(`ERROR: ${error.message}`);
       }
     }
@@ -191,12 +214,12 @@ export async function runImport(prepared) {
       const categories = preflightData.categoryAnalysis;
       log(`Prodotti totali feed: ${categories.totalProducts}`);
       log(`Prodotti importabili: ${categories.importableProducts}`);
-      log(`Prodotti esclusi per categoria sorgente mancante: ${categories.missingSourceCategoryProducts}`);
+      log(`Prodotti con categoria sorgente mancante: ${categories.missingSourceCategoryProducts}`);
       log(`Prodotti senza categoria non registrabili (g:id mancante): ${categories.missingSourceCategoryUnrecordableProducts}`);
-      log(`Esclusi categoria non mappata: ${categories.unmappedValidCategoryProducts}`);
+      log(`Senza categoria Base.com: ${categories.withoutBaseCategoryProducts}`);
       log(`Categorie reali non mappate: ${categories.unmappedCount}`);
       for (const entry of categories.entries.filter(entry => !entry.mapped)) {
-        log(`${entry.sourceCategory} → ${entry.count} prodotti esclusi`);
+        log(`${entry.sourceCategory} → ${entry.count} prodotti senza categoria Base.com`);
       }
       if (categories.missingSourceCategoryProducts > categories.missingSourceCategoryUnrecordableProducts) {
         log('Prodotti senza categoria registrati in: reports/no_name_products.json');

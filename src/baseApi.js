@@ -6,8 +6,10 @@ import { nameIdentity } from './names.js';
 const readMethods = new Set([
   'getInventories', 'getInventoryPriceGroups', 'getInventoryWarehouses',
   'getInventoryManufacturers', 'getInventoryCategories',
+  'getInventoryTags',
   'getInventoryExtraFields', 'getInventoryParameters',
   'getInventoryProductsList', 'getInventoryProductsData',
+  'getOrders', 'getOrderStatusList',
 ]);
 let requestQueue = Promise.resolve();
 let nextRequestAt = 0;
@@ -58,6 +60,9 @@ function requestKey(method, parameters, body) {
   }
   if (method === 'addInventoryCategory' && typeof parameters.name === 'string') {
     return JSON.stringify([method, parameters.inventory_id, parameters.parent_id, nameIdentity(parameters.name)]);
+  }
+  if (method === 'addInventoryTag' && typeof parameters.name === 'string') {
+    return JSON.stringify([method, nameIdentity(parameters.name)]);
   }
   return body?.toString() ?? new URLSearchParams({ method, parameters: JSON.stringify(parameters) }).toString();
 }
@@ -131,7 +136,9 @@ export async function callBase(method, parameters = {}) {
         if (error.uncertain) uncertainWrites.set(key, error);
         if (!readOnly || !error.temporary || attempt === attempts) throw error;
         nextRequestAt = Math.max(nextRequestAt, Date.now() + retryDelay * 2 ** (attempt - 1));
-        log(`[RETRY] ${method}: ${error.message}; tentativo ${attempt + 1}/${attempts}`);
+        log(readOnly && (method === 'getOrders' || method === 'getOrderStatusList')
+          ? `[RETRY] ${method}: tentativo ${attempt + 1}/${attempts}`
+          : `[RETRY] ${method}: ${error.message}; tentativo ${attempt + 1}/${attempts}`);
       }
     }
   });
@@ -139,7 +146,7 @@ export async function callBase(method, parameters = {}) {
   return run;
 }
 
-export async function getBaseInventory() {
+export async function getBaseInventory(preferredInventoryId = null) {
   const data = await callBase('getInventories');
   log('[DEBUG] Chiamata getInventories completata');
   if (!Array.isArray(data.inventories) || data.inventories.length === 0) {
@@ -147,10 +154,13 @@ export async function getBaseInventory() {
   }
   log(`[DEBUG] Inventory disponibili: ${data.inventories.length}`);
 
-  if (inventoryId) {
-    const inventory = data.inventories.find(item => String(item.inventory_id) === inventoryId);
+  const requestedInventoryId = preferredInventoryId ?? inventoryId;
+  if (requestedInventoryId) {
+    const inventory = data.inventories.find(item => String(item.inventory_id) === String(requestedInventoryId));
     if (inventory) return inventory;
-    throw new Error(`BASE_INVENTORY_ID=${inventoryId} non trovato; nessun catalogo alternativo selezionato.`);
+    throw new Error(preferredInventoryId != null
+      ? `Inventory produttore ${preferredInventoryId} non trovato: ripeti la riconciliazione prima dell’import.`
+      : `BASE_INVENTORY_ID=${inventoryId} non trovato; nessun catalogo alternativo selezionato.`);
   }
 
   const defaults = data.inventories.filter(inventory => inventory.is_default === true);
@@ -337,6 +347,8 @@ function writtenValuesMatch(payload, details, sku) {
         const current = details.images?.[Number(position) + 1];
         if (typeof current !== 'string' || current.replace(/^url:/, '') !== desired.replace(/^url:/, '')) return false;
       }
+    } else if (field === 'tags') {
+      if (JSON.stringify(details.tags ?? []) !== JSON.stringify(value)) return false;
     } else if (field === 'ean') {
       if (details[field] == null || String(details[field]) !== String(value)) return false;
     } else if (['weight', 'manufacturer_id', 'category_id', 'tax_rate', 'height', 'width', 'length'].includes(field)) {
