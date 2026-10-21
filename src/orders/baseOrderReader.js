@@ -19,15 +19,25 @@ export async function readBaseOrder(input, { call = callBase, hasToken = () => B
   const orderId = parseOrderId(input);
   if (!orderId) throw orderError('invalidId');
   if (!hasToken()) throw orderError('missingToken');
-  const response = await call('getOrders', { order_id: orderId, get_unconfirmed_orders: true });
+  const response = await call('getOrders', { order_id: orderId, get_unconfirmed_orders: true,
+    include_discounts_data: true, include_custom_extra_fields: true });
   if (!Array.isArray(response?.orders)) throw orderError('invalidResponse');
   const matches = response.orders.filter(item => parseOrderId(item?.order_id) === orderId);
   if (matches.length === 0 && response.orders.length === 0) throw orderError('notFound');
   if (matches.length !== 1 || response.orders.length !== 1) throw orderError('invalidResponse');
-  let statuses = [];
+  const { statuses, sources } = await readOrderMetadata(call);
+  return normalizeOrder(matches[0], orderId, statuses, sources);
+}
+
+export async function readOrderMetadata(call = callBase) {
+  let statuses = []; let sources = {};
   try {
-    const statusResponse = await call('getOrderStatusList', {});
-    if (Array.isArray(statusResponse?.statuses)) statuses = statusResponse.statuses;
-  } catch { /* The order remains usable with its numeric status ID. */ }
-  return normalizeOrder(matches[0], orderId, statuses);
+    const result = await call('getOrderStatusList', {});
+    if (Array.isArray(result?.statuses)) statuses = result.statuses;
+  } catch { /* The numeric status ID remains available. */ }
+  try {
+    const result = await call('getOrderSources', {});
+    if (result?.sources && typeof result.sources === 'object') sources = result.sources;
+  } catch { /* The source type and ID remain available. */ }
+  return { statuses, sources };
 }

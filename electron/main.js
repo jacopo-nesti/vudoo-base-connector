@@ -15,6 +15,7 @@ import { getProductOverride } from './effectiveProduct.js';
 import { basePayloadPreview, assertBaseLocalSendable } from '../src/marketplaces/base/localPreview.js';
 import { validateBulkBaseInput } from '../src/productSchema.js';
 import { MANUFACTURERS_DB_FILE_NAME, openManufacturerDirectory, registerLoadedCatalog } from './manufacturerDirectory.js';
+import { ORDERS_DB_FILE_NAME, openOrderStore } from './orderStore.js';
 import { createManufacturerInventoryService } from './manufacturerInventory.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -73,6 +74,7 @@ async function bootstrap() {
   const { BASE_PRODUCT_DETAILS_CHUNK_SIZE } = await import("../src/baseApi.js");
   const { callBase } = await import('../src/baseApi.js');
   const { readBaseOrder, classifyOrderError } = await import('../src/orders/baseOrderReader.js');
+  const { syncOrders } = await import('../src/orders/orderSync.js');
   const { createInventoryTagService } = await import('../src/inventoryTags.js');
   const baseConfig = await import('../src/config.js');
 
@@ -99,12 +101,19 @@ async function bootstrap() {
   let activeInventoryStatus = null;
   const productOverridesPath = path.join(app.getPath('userData'), PRODUCT_OVERRIDES_FILE_NAME);
   const manufacturersPath = path.join(app.getPath('userData'), MANUFACTURERS_DB_FILE_NAME);
+  const ordersPath = path.join(app.getPath('userData'), ORDERS_DB_FILE_NAME);
+  let orderStore = null;
+  let ordersSyncing = false;
+  function getOrderStore() {
+    orderStore ??= openOrderStore(ordersPath);
+    return orderStore;
+  }
   let manufacturerDirectory = null;
   function getManufacturerDirectory() {
     manufacturerDirectory ??= openManufacturerDirectory(manufacturersPath);
     return manufacturerDirectory;
   }
-  app.on('before-quit', () => manufacturerDirectory?.close());
+  app.on('before-quit', () => { manufacturerDirectory?.close(); orderStore?.close(); });
   const writeGuard = createWriteGuard();
   let inventoryService = null;
   function getInventoryService() {
@@ -197,8 +206,27 @@ async function bootstrap() {
 
   async function startDesktopApp() {
     ipcMain.handle('orders:get', async (_event, orderId) => {
-      try { return { ok: true, order: await readBaseOrder(orderId) }; }
+      try {
+        const order = await readBaseOrder(orderId);
+        getOrderStore().upsertOrders([order]);
+        return { ok: true, order: getOrderStore().get(order.identity.order_id) };
+      } catch (error) { return { ok: false, code: classifyOrderError(error) }; }
+    });
+    ipcMain.handle('orders:list', (_event, filters) => {
+      try { return { ok: true, ...getOrderStore().list(filters),
+        facets: getOrderStore().facets(), syncState: getOrderStore().syncState() }; }
+      catch { return { ok: false, code: 'storageError' }; }
+    });
+    ipcMain.handle('orders:detail', (_event, orderId) => {
+      try { return { ok: true, order: getOrderStore().get(orderId) }; }
+      catch { return { ok: false, code: 'storageError' }; }
+    });
+    ipcMain.handle('orders:sync', async () => {
+      if (ordersSyncing) return { ok: false, code: 'alreadySyncing' };
+      ordersSyncing = true;
+      try { return { ok: true, result: await syncOrders(getOrderStore()) }; }
       catch (error) { return { ok: false, code: classifyOrderError(error) }; }
+      finally { ordersSyncing = false; }
     });
     ipcMain.handle('manufacturers:list', () => {
       try { return { ok: true, manufacturers: getManufacturerDirectory().list() }; }

@@ -21,9 +21,13 @@ test('getOrders requests exactly one ID including unconfirmed orders, then resol
   const calls = [];
   const order = await readBaseOrder('1234', { hasToken: () => true, call: async (method, parameters) => {
     calls.push([method, parameters]);
-    return method === 'getOrders' ? { orders: [rawOrder] } : { statuses: [{ id: 7, name: 'Processing' }] };
+    return method === 'getOrders' ? { orders: [rawOrder] }
+      : method === 'getOrderStatusList' ? { statuses: [{ id: 7, name: 'Processing' }] }
+        : { sources: { etsy: { 4: 'Omniasenses (Etsy)' } } };
   } });
-  assert.deepEqual(calls, [['getOrders', { order_id: 1234, get_unconfirmed_orders: true }], ['getOrderStatusList', {}]]);
+  assert.deepEqual(calls, [['getOrders', { order_id: 1234, get_unconfirmed_orders: true,
+    include_discounts_data: true, include_custom_extra_fields: true }],
+  ['getOrderStatusList', {}], ['getOrderSources', {}]]);
   assert.equal(order.statusName, 'Processing');
   assert.equal(order.identity.confirmed, false);
   assert.equal(order.quality.unconfirmed, true);
@@ -65,7 +69,7 @@ test('status lookup failure preserves the order and errors are reduced to safe c
   assert.equal(classifyOrderError(new Error('private address')), 'apiError');
 });
 
-test('only the two order methods join the existing read allowlist', async () => {
+test('only order read methods join the existing read allowlist', async () => {
   const { setDryRunMode } = await import('../src/config.js');
   const { callBase } = await import('../src/baseApi.js');
   const oldFetch = globalThis.fetch;
@@ -79,9 +83,10 @@ test('only the two order methods join the existing read allowlist', async () => 
   try {
     await callBase('getOrders', { order_id: 1234, get_unconfirmed_orders: true });
     await callBase('getOrderStatusList');
+    await callBase('getOrderSources');
     await callBase('getInventories');
     await assert.rejects(callBase('addOrder', {}), /DRY_RUN: scrittura addOrder bloccata/);
     await assert.rejects(callBase('addInventoryProduct', {}), /DRY_RUN: scrittura addInventoryProduct bloccata/);
-    assert.deepEqual(observed, ['getOrders', 'getOrderStatusList', 'getInventories']);
+    assert.deepEqual(observed, ['getOrders', 'getOrderStatusList', 'getOrderSources', 'getInventories']);
   } finally { globalThis.fetch = oldFetch; }
 });

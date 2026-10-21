@@ -18,7 +18,7 @@ const sections = [
   { page: 'base-catalog', label: 'Prodotti', icon: 'catalog', heading: 'CATALOGO' },
   { page: 'system-problems', label: 'Problemi', icon: 'diagnostics' },
   { page: 'base-operations', label: 'Import / Operazioni', icon: 'operations', heading: 'BASE.COM' },
-  { page: 'base-orders', label: 'Ordini (Beta)', icon: 'orders' },
+  { page: 'base-orders', label: 'Ordini', icon: 'orders' },
   { page: 'base-diagnostics', label: 'Diagnostica', icon: 'diagnostics' },
   { page: 'system-settings', label: 'Impostazioni', icon: 'settings', heading: 'SISTEMA' },
   { page: 'system-help', label: 'Guida', icon: 'help' },

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import OrderDetail, { orderDate, shown } from './OrderDetail.jsx';
 import '../ordersBeta.css';
 
 const errorText = {
@@ -10,96 +11,126 @@ const errorText = {
   timeout: 'Base.com non ha risposto in tempo. Riprova.',
   network: 'Connessione a Base.com non disponibile. Riprova.',
   invalidResponse: 'La risposta Base.com non è nel formato atteso.',
-  apiError: 'Impossibile recuperare l’ordine da Base.com. Riprova.',
+  alreadySyncing: 'Aggiornamento ordini già in corso.',
+  storageError: 'Archivio ordini locale non disponibile.',
+  apiError: 'Operazione Base.com non riuscita. Riprova.',
 };
-const shippingFields = [
-  ['delivery_fullname', 'Destinatario'], ['delivery_company', 'Azienda'],
-  ['delivery_address', 'Via e numero'], ['delivery_postcode', 'CAP'],
-  ['delivery_city', 'Città'], ['delivery_state', 'Provincia / regione'],
-  ['delivery_country', 'Paese'], ['delivery_country_code', 'Codice Paese'],
-  ['delivery_method', 'Metodo di spedizione'], ['delivery_point_id', 'ID punto di ritiro'],
-  ['delivery_point_name', 'Punto di ritiro'], ['delivery_point_address', 'Indirizzo punto di ritiro'],
-  ['delivery_point_postcode', 'CAP punto di ritiro'], ['delivery_point_city', 'Città punto di ritiro'],
-];
-const billingFields = [
-  ['invoice_fullname', 'Intestatario'], ['invoice_company', 'Azienda'],
-  ['invoice_nip', 'Partita IVA / codice fiscale'], ['invoice_address', 'Via e numero'],
-  ['invoice_postcode', 'CAP'], ['invoice_city', 'Città'],
-  ['invoice_state', 'Provincia / regione'], ['invoice_country', 'Paese'],
-  ['invoice_country_code', 'Codice Paese'], ['want_invoice', 'Fattura richiesta'],
-];
-const shown = value => value === null || value === undefined || value === '' ? 'Non disponibile' : String(value);
-const confirmed = value => value === true || value === 1 || value === '1'
-  ? 'Sì' : value === false || value === 0 || value === '0' ? 'No' : 'Non disponibile';
-const date = value => Number.isFinite(Number(value)) && Number(value) > 0
-  ? new Date(Number(value) * 1000).toLocaleString('it-IT') : 'Non disponibile';
-function DataCard({ title, data, fields }) {
-  return <section className="card order-card"><h2>{title}</h2><dl className="order-fields">{fields.map(([key, label]) =>
-    <div key={key}><dt>{label}</dt><dd>{shown(data?.[key])}</dd></div>
-  )}</dl></section>;
+const PAGE_SIZE = 50;
+const emptyFilters = { query: '', dateFrom: '', dateTo: '', source: '', statusId: '', payment: '', quality: '' };
+function unixDay(value, next = false) {
+  if (!value) return undefined;
+  const date = new Date(`${value}T00:00:00`);
+  if (next) date.setDate(date.getDate() + 1);
+  return Math.floor(date.getTime() / 1000);
+}
+function lastUpdated(value, now) {
+  if (!value) return 'Mai';
+  const minutes = Math.max(0, Math.floor((now - Date.parse(value)) / 60000));
+  return minutes < 1 ? 'Adesso' : minutes < 60 ? `${minutes} minuti fa` : new Date(value).toLocaleString('it-IT');
+}
+function paidLabel(value) {
+  if (value === null || value === undefined) return 'Non disponibile';
+  return Number(value) > 0 ? `${Number(value).toFixed(2)} registrati` : '0 registrato';
 }
 
 export default function OrdersBetaPage() {
   const [id, setId] = useState('');
+  const [filters, setFilters] = useState(emptyFilters);
+  const [page, setPage] = useState(0);
+  const [revision, setRevision] = useState(0);
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [facets, setFacets] = useState({ sources: [], statuses: [] });
+  const [syncState, setSyncState] = useState(null);
   const [order, setOrder] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [listBusy, setListBusy] = useState(false);
   const [error, setError] = useState('');
-  const [fetchedAt, setFetchedAt] = useState(null);
-  async function fetchOrder(event) {
-    event.preventDefault();
+  const [success, setSuccess] = useState('');
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(timer); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setListBusy(true);
+    window.electronAPI.listBaseOrders({ ...filters, dateFrom: unixDay(filters.dateFrom),
+      dateTo: unixDay(filters.dateTo, true), limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+      .then(response => {
+        if (cancelled) return;
+        if (!response?.ok) { setError(errorText[response?.code] || errorText.storageError); return; }
+        setRows(response.rows); setTotal(response.total); setFacets(response.facets);
+        setSyncState(response.syncState);
+      })
+      .catch(() => { if (!cancelled) setError(errorText.storageError); })
+      .finally(() => { if (!cancelled) setListBusy(false); });
+    return () => { cancelled = true; };
+  }, [filters, page, revision]);
+
+  function changeFilter(name, value) {
+    setFilters(current => ({ ...current, [name]: value })); setPage(0);
+  }
+  async function fetchId(event) {
+    event?.preventDefault();
     if (busy) return;
-    setBusy(true); setError(''); setOrder(null); setFetchedAt(null);
+    const requested = event ? id.trim() : String(order?.identity?.order_id || '');
+    setBusy(true); setError(''); setSuccess('');
     try {
-      const response = await window.electronAPI.getBaseOrder(id.trim());
+      const response = await window.electronAPI.getBaseOrder(requested);
       if (!response?.ok) { setError(errorText[response?.code] || errorText.apiError); return; }
-      setOrder(response.order);
-      setFetchedAt(new Date().toLocaleString('it-IT'));
+      setOrder({ ...response.order, fetchedAt: new Date().toISOString() });
+      setId(String(response.order.identity.order_id));
+      setRevision(value => value + 1);
+      setSuccess('Ordine aggiornato da Base.com e salvato localmente.');
     } catch { setError(errorText.apiError); }
     finally { setBusy(false); }
   }
-  const identity = order?.identity;
-  const products = order?.products || [];
-  const productSubtotal = products.length && products.every(item => item.price_brutto != null && item.quantity != null && Number.isFinite(Number(item.price_brutto)) && Number.isFinite(Number(item.quantity)))
-    ? products.reduce((sum, item) => sum + Number(item.price_brutto) * Number(item.quantity), 0) : null;
+  async function openStored(orderId) {
+    setError(''); setSuccess('');
+    try {
+      const response = await window.electronAPI.getStoredBaseOrder(orderId);
+      if (!response?.ok || !response.order) { setError(errorText.storageError); return; }
+      setOrder(response.order); setId(String(orderId));
+    } catch { setError(errorText.storageError); }
+  }
+  async function sync() {
+    if (busy) return;
+    setBusy(true); setError(''); setSuccess('');
+    try {
+      const response = await window.electronAPI.syncBaseOrders();
+      setRevision(value => value + 1);
+      if (!response?.ok) { setError(`Aggiornamento non riuscito. ${errorText[response?.code] || errorText.apiError}`); return; }
+      if (order) {
+        try {
+          const refreshed = await window.electronAPI.getStoredBaseOrder(order.identity.order_id);
+          if (refreshed?.ok && refreshed.order) setOrder(refreshed.order);
+        } catch { /* The successful sync remains visible; the detail can be reopened. */ }
+      }
+      setSuccess(`Aggiornamento completato: ${response.result.created} nuovi, ${response.result.updated} aggiornati.`);
+      setNow(Date.now());
+    } catch { setError('Aggiornamento non riuscito. ' + errorText.apiError); }
+    finally { setBusy(false); }
+  }
+
   return <div className="page-stack orders-beta">
-    <div className="page-heading"><div><h1>Ordini (Beta)</h1><p>Consultazione sperimentale di un singolo ordine Base.com. Solo lettura, nessun salvataggio o aggiornamento automatico.</p></div></div>
-    <section className="card order-search"><form onSubmit={fetchOrder}><label className="form-field"><span>ID ordine Base.com</span><input className="input" type="text" inputMode="numeric" autoComplete="off" value={id} onChange={event => { setId(event.target.value); setOrder(null); setError(''); }} placeholder="Inserisci ID ordine" /></label><button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Recupero in corso…' : 'Recupera ordine'}</button></form><p>Per verificare una correzione fatta su Base.com, premi di nuovo “Recupera ordine”.</p></section>
+    <div className="page-heading"><div><h1>Ordini</h1><p>Ordini Base.com salvati localmente. Lettura e aggiornamento manuale, senza modifiche su Base.com.</p></div></div>
+    <div className="order-actions"><form onSubmit={fetchId}><label className="form-field"><span>ID ordine Base.com</span><input className="input" type="text" inputMode="numeric" autoComplete="off" value={id} onChange={event => setId(event.target.value)} placeholder="Inserisci ID ordine" /></label><button className="btn btn-secondary" type="submit" disabled={busy}>Apri / aggiorna ID</button></form><div><button className="btn btn-primary" type="button" onClick={sync} disabled={busy}>{busy ? 'Aggiornamento ordini…' : 'Aggiorna ordini'}</button><small>Ultimo aggiornamento: {lastUpdated(syncState?.lastSuccessAt, now)}</small></div></div>
     {error && <div className="alert alert-danger" role="alert">{error}</div>}
-    {busy && <div className="alert alert-info" role="status">Lettura dell’ordine in corso…</div>}
-    {order && <>
-      <div className="order-result-heading"><strong>Ordine {shown(identity.order_id)}</strong><span>Letto il {fetchedAt}</span></div>
-      {order.quality.unconfirmed && <div className="alert alert-warning" role="alert"><strong>Ordine non confermato.</strong> I dati e i prodotti potrebbero essere provvisori o incompleti.</div>}
-      <div className="order-grid">
-        <section className="card order-card"><h2>Identificativi</h2><dl className="order-fields">
-          <div><dt>ID Base.com</dt><dd>{shown(identity.order_id)}</dd></div>
-          <div><dt>Numero marketplace</dt><dd>{shown(identity.external_order_id)}</dd></div>
-          <div><dt>ID negozio</dt><dd>{shown(identity.shop_order_id)}</dd></div>
-          <div><dt>Marketplace</dt><dd>{shown(identity.order_source)}</dd></div>
-          <div><dt>Sorgente / negozio</dt><dd>{shown(identity.order_source_info)}{identity.order_source_id != null ? ` (ID ${identity.order_source_id})` : ''}</dd></div>
-          <div><dt>Data ordine</dt><dd>{date(identity.date_add)}</dd></div>
-          <div><dt>Stato ordine</dt><dd>{shown(order.statusName)} · ID {shown(identity.order_status_id)}</dd></div>
-          <div><dt>confirmed</dt><dd>{confirmed(identity.confirmed)}</dd></div>
-        </dl></section>
-        <section className="card order-card"><h2>Cliente</h2><dl className="order-fields"><div><dt>Nome e cognome</dt><dd>Non disponibile</dd></div><div><dt>Email</dt><dd>{shown(order.customer.email)}</dd></div><div><dt>Telefono</dt><dd>{shown(order.customer.phone)}</dd></div></dl><p>getOrders restituisce i nominativi di spedizione e fatturazione nelle rispettive sezioni.</p></section>
-        <DataCard title="Spedizione" data={order.shipping} fields={shippingFields} />
-        <DataCard title="Fatturazione" data={order.billing} fields={billingFields} />
-      </div>
-      <section className="card order-card"><h2>Prodotti</h2>{products.length ? <div className="table-scroll"><table className="table"><thead><tr><th>Nome</th><th>SKU</th><th>EAN</th><th>Quantità</th><th>Prezzo unitario lordo</th><th>Valore riga calcolato</th></tr></thead><tbody>{products.map((item, index) => <tr key={`${item.order_product_id ?? 'item'}-${index}`}><td>{shown(item.name)}</td><td>{shown(item.sku)}</td><td>{shown(item.ean)}</td><td>{shown(item.quantity)}</td><td>{shown(item.price_brutto)}</td><td>{item.quantity != null && item.price_brutto != null ? (Number(item.quantity) * Number(item.price_brutto)).toFixed(2) : 'Non disponibile'}</td></tr>)}</tbody></table></div> : <p>Non disponibile</p>}</section>
-      <section className="card order-card"><h2>Informazioni economiche</h2><dl className="order-fields">
-        <div><dt>Valore prodotti calcolato</dt><dd>{productSubtotal === null ? 'Non disponibile' : productSubtotal.toFixed(2)}</dd></div>
-        <div><dt>Costo spedizione</dt><dd>{shown(order.economics.delivery_price)}</dd></div>
-        <div><dt>Totale ordine</dt><dd>Non disponibile</dd></div>
-        <div><dt>Valuta</dt><dd>{shown(order.economics.currency)}</dd></div>
-        <div><dt>Metodo pagamento</dt><dd>{shown(order.economics.payment_method)}</dd></div>
-        <div><dt>Contrassegno</dt><dd>{shown(order.economics.payment_method_cod)}</dd></div>
-        <div><dt>Importo pagato</dt><dd>{shown(order.economics.payment_done)}</dd></div>
-      </dl><p>Il totale non è fornito direttamente da getOrders; i valori calcolati non includono eventuali sconti.</p></section>
-      <section className="card order-card"><h2>Verifica dati ordine</h2>
-        <p><strong>Dati spedizione presenti:</strong> {order.quality.presentShipping.length ? order.quality.presentShipping.map(key => shippingFields.find(([field]) => field === key)?.[1] || key).join(', ') : 'Nessuno'}</p>
-        <p><strong>Dati spedizione mancanti:</strong> {order.quality.missingShipping.length ? order.quality.missingShipping.map(key => shippingFields.find(([field]) => field === key)?.[1] || key).join(', ') : 'Nessuno fra i campi controllati'}</p>
-        <p><strong>Codice Paese restituito dall’API:</strong> {shown(order.shipping.delivery_country_code)}</p>
-        <p><strong>Da verificare con Etsy:</strong> {order.quality.reviewWithEtsy ? 'Sì. Confronta indirizzo e Paese con l’ordine originale prima di usarli.' : 'Non applicabile alla sorgente indicata.'}</p>
-        <p>La presenza di un indirizzo completo non ne conferma l’esattezza.</p>
+    {success && <div className="alert alert-info" role="status">{success}</div>}
+    {order ? <OrderDetail order={order} onBack={() => { setOrder(null); setSuccess(''); }} onRefresh={() => fetchId()} refreshing={busy} /> : <>
+      <section className="card order-filters" aria-label="Filtri ordini">
+        <label className="form-field order-search-field"><span>Cerca ID, marketplace, cliente, email, SKU, EAN, prodotto</span><input className="input" type="search" value={filters.query} onChange={event => changeFilter('query', event.target.value)} /></label>
+        <label className="form-field"><span>Dal</span><input className="input" type="date" value={filters.dateFrom} onChange={event => changeFilter('dateFrom', event.target.value)} /></label>
+        <label className="form-field"><span>Al</span><input className="input" type="date" value={filters.dateTo} onChange={event => changeFilter('dateTo', event.target.value)} /></label>
+        <label className="form-field"><span>Marketplace</span><select className="select" value={filters.source} onChange={event => changeFilter('source', event.target.value)}><option value="">Tutti</option>{facets.sources.map(item => <option value={item.value} key={item.value}>{item.value}</option>)}</select></label>
+        <label className="form-field"><span>Stato ordine</span><select className="select" value={filters.statusId} onChange={event => changeFilter('statusId', event.target.value)}><option value="">Tutti</option>{facets.statuses.map(item => <option value={item.value} key={item.value}>{item.name || `ID ${item.value}`}</option>)}</select></label>
+        <label className="form-field"><span>Importo pagato</span><select className="select" value={filters.payment} onChange={event => changeFilter('payment', event.target.value)}><option value="">Tutti</option><option value="recorded">Importo registrato</option><option value="zero">Zero</option><option value="unknown">Non disponibile</option></select></label>
+        <label className="form-field"><span>Completezza</span><select className="select" value={filters.quality} onChange={event => changeFilter('quality', event.target.value)}><option value="">Tutti</option><option value="Completo">Completo</option><option value="Da verificare">Da verificare</option></select></label>
+        <button type="button" className="btn btn-secondary" onClick={() => { setFilters(emptyFilters); setPage(0); }}>Reset filtri</button>
+      </section>
+      <section className="card order-list"><div className="order-list-heading"><h2>Ordini <span>{total}</span></h2>{listBusy && <small role="status">Caricamento lista…</small>}</div>
+        {rows.length ? <div className="table-scroll"><table className="table"><thead><tr><th>ID Base</th><th>Ordine marketplace</th><th>Data</th><th>Marketplace / negozio</th><th>Cliente</th><th>Paese spedizione</th><th>Stato pagamento</th><th>Importo pagato</th><th>Valuta</th><th>Stato ordine</th><th>Verifica</th></tr></thead><tbody>{rows.map(row => <tr key={row.baseOrderId} className="order-clickable-row" onClick={() => openStored(row.baseOrderId)}><td><button className="order-row-link" type="button" onClick={event => { event.stopPropagation(); openStored(row.baseOrderId); }} aria-label={`Apri ordine ${row.baseOrderId}`}>{row.baseOrderId}</button></td><td>{shown(row.externalOrderId)}</td><td>{orderDate(row.dateAdd)}</td><td>{shown(row.source)}<small>{shown(row.sourceName || row.sourceId)}</small></td><td>{shown(row.displayName)}</td><td>{shown(row.deliveryCountry)}</td><td>Non disponibile</td><td>{paidLabel(row.paymentDone)}</td><td>{shown(row.currency)}</td><td>{shown(row.statusName || row.statusId)}</td><td><span className={row.qualityStatus === 'Completo' ? 'order-quality-good' : 'order-tax-warning'}>{row.qualityStatus}</span></td></tr>)}</tbody></table></div>
+          : <p>{syncState?.lastSuccessAt ? 'Nessun ordine corrisponde ai filtri.' : 'Nessun ordine sincronizzato. Premi “Aggiorna ordini” per recuperarli da Base.com.'}</p>}
+        {total > PAGE_SIZE && <div className="order-pagination"><button className="btn btn-secondary" type="button" disabled={page === 0 || listBusy} onClick={() => setPage(value => value - 1)}>Precedenti</button><span>Pagina {page + 1} di {Math.ceil(total / PAGE_SIZE)}</span><button className="btn btn-secondary" type="button" disabled={(page + 1) * PAGE_SIZE >= total || listBusy} onClick={() => setPage(value => value + 1)}>Successivi</button></div>}
       </section>
     </>}
   </div>;

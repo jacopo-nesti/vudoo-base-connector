@@ -9,7 +9,7 @@ const readMethods = new Set([
   'getInventoryTags',
   'getInventoryExtraFields', 'getInventoryParameters',
   'getInventoryProductsList', 'getInventoryProductsData',
-  'getOrders', 'getOrderStatusList',
+  'getOrders', 'getOrderStatusList', 'getOrderSources',
 ]);
 let requestQueue = Promise.resolve();
 let nextRequestAt = 0;
@@ -136,7 +136,7 @@ export async function callBase(method, parameters = {}) {
         if (error.uncertain) uncertainWrites.set(key, error);
         if (!readOnly || !error.temporary || attempt === attempts) throw error;
         nextRequestAt = Math.max(nextRequestAt, Date.now() + retryDelay * 2 ** (attempt - 1));
-        log(readOnly && (method === 'getOrders' || method === 'getOrderStatusList')
+        log(readOnly && (method === 'getOrders' || method === 'getOrderStatusList' || method === 'getOrderSources')
           ? `[RETRY] ${method}: tentativo ${attempt + 1}/${attempts}`
           : `[RETRY] ${method}: ${error.message}; tentativo ${attempt + 1}/${attempts}`);
       }

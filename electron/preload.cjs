@@ -3,6 +3,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electronAPI", {
   ping: () => ipcRenderer.invoke("app:ping"),
   getBaseOrder: (orderId) => ipcRenderer.invoke('orders:get', orderId),
+  listBaseOrders: (filters) => ipcRenderer.invoke('orders:list', filters),
+  getStoredBaseOrder: (orderId) => ipcRenderer.invoke('orders:detail', orderId),
+  syncBaseOrders: () => ipcRenderer.invoke('orders:sync'),
   checkEnvironment: () => ipcRenderer.invoke("environment:check"),
   getRuntimeMode: () => ipcRenderer.invoke("app:runtime-mode"),
   setOperatingMode: (mode) => ipcRenderer.invoke("app:set-operating-mode", mode),

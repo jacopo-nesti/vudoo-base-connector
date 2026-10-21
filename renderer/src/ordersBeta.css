@@ -11,3 +11,27 @@
 .order-fields dd { margin: 0; overflow-wrap: anywhere; }
 .orders-beta .table { width: 100%; }
 @media (max-width: 900px) { .order-grid { grid-template-columns: 1fr; } }
+.order-actions, .order-actions form { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.order-actions { justify-content: space-between; }
+.order-actions > div { display: grid; gap: 5px; }
+.order-actions small, .order-result-heading small, .order-list small, .order-card td small { display: block; color: var(--color-text-secondary); font-size: 11px; }
+.order-actions .form-field { min-width: 220px; }
+.order-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.order-filters .form-field { min-width: 120px; flex: 1 1 130px; }
+.order-filters .order-search-field { flex: 2 1 260px; }
+.order-list-heading, .order-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.order-list-heading h2 { margin: 0 0 12px; font-size: 15px; }
+.order-list-heading span { color: var(--color-text-secondary); }
+.order-list .table { min-width: 1100px; }
+.order-list td { vertical-align: top; }
+.order-clickable-row { cursor: pointer; }
+.order-row-link { border: 0; background: none; color: var(--color-accent-text); cursor: pointer; font: inherit; font-weight: 700; padding: 0; text-decoration: underline; }
+.order-row-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.order-pagination { justify-content: flex-end; margin-top: 14px; }
+.order-tax-warning { color: var(--color-warning); }
+.order-quality-good { color: var(--color-success); }
+.order-issues { margin: 12px 0; padding-left: 22px; font-size: 12px; }
+.order-issues li { margin: 5px 0; }
+.order-discounts { border-top: 1px solid var(--color-border); margin-top: 16px; padding-top: 12px; }
+.order-discounts h3 { font-size: 12px; }
+.order-result-heading > div { flex: 1; }
