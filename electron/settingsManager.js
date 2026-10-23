@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   unmappedCategoryPolicy: 'block',
   vudooResultsLimit: 3000,
   vudooTimeoutMs: 90000,
+  automaticStockCap: 10,
   baseApiRequestsPerMinute: 95,
   baseApiReadAttempts: 3,
   baseApiRetryDelayMs: 1000,
@@ -22,6 +23,7 @@ const environmentKeys = Object.freeze({
   unmappedCategoryPolicy: 'UNMAPPED_CATEGORY_POLICY',
   vudooResultsLimit: 'VUDOO_RESULTS_LIMIT',
   vudooTimeoutMs: 'VUDOO_TIMEOUT_MS',
+  automaticStockCap: 'VUDOO_AUTOMATIC_STOCK_CAP',
   baseApiRequestsPerMinute: 'BASE_API_REQUESTS_PER_MINUTE',
   baseApiReadAttempts: 'BASE_API_READ_ATTEMPTS',
   baseApiRetryDelayMs: 'BASE_API_RETRY_DELAY_MS',
@@ -31,6 +33,7 @@ const environmentKeys = Object.freeze({
 const numericLimits = Object.freeze({
   vudooResultsLimit: [1, Number.MAX_SAFE_INTEGER],
   vudooTimeoutMs: [1, Number.MAX_SAFE_INTEGER],
+  automaticStockCap: [1, 100],
   baseApiRequestsPerMinute: [1, Number.MAX_SAFE_INTEGER],
   baseApiReadAttempts: [1, 10],
   baseApiRetryDelayMs: [1, 3600000],

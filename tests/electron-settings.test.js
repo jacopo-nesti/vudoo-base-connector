@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
+import { normalizeProduct } from '../src/products.js';
 import {
   DEFAULT_SETTINGS, applySettingsToEnvironment, getEffectiveSettings,
   loadSettings, readEnvironmentSettings, resetSettings, saveSettings, validateSettings,
@@ -40,7 +41,7 @@ test('Modalità operativa: real di default, preferenza simulation persistita e r
 
 test('Electron settings: typed booleans and numbers survive save, reload, and atomic replacement', async () => {
   await withSettingsFile(async (filePath, directory) => {
-    const first = { dryRun: false, testMode: false, baseApiRequestsPerMinute: 95 };
+    const first = { dryRun: false, testMode: false, baseApiRequestsPerMinute: 95, automaticStockCap: 25 };
     await saveSettings(filePath, first);
     assert.deepEqual((await loadSettings(filePath)).settings, first);
     await saveSettings(filePath, { ...first, baseApiRequestsPerMinute: 98 });
@@ -61,6 +62,8 @@ test('Electron settings: only supported keys and types can be persisted', async 
       { baseApiRequestsPerMinute: 0 },
       { baseApiReadAttempts: 11 },
       { baseApiRetryDelayMs: 3600001 },
+      { automaticStockCap: 0 },
+      { automaticStockCap: 101 },
       { unmappedCategoryPolicy: 'other' },
     ]) {
       await assert.rejects(saveSettings(filePath, input));
@@ -96,6 +99,7 @@ test('Electron settings: all supported fields map to their core environment keys
     unmappedCategoryPolicy: 'skip',
     vudooResultsLimit: 5000,
     vudooTimeoutMs: 120000,
+    automaticStockCap: 25,
     baseApiRequestsPerMinute: 98,
     baseApiReadAttempts: 10,
     baseApiRetryDelayMs: 2500,
@@ -108,6 +112,7 @@ test('Electron settings: all supported fields map to their core environment keys
     UNMAPPED_CATEGORY_POLICY: 'skip',
     VUDOO_RESULTS_LIMIT: '5000',
     VUDOO_TIMEOUT_MS: '120000',
+    VUDOO_AUTOMATIC_STOCK_CAP: '25',
     BASE_API_REQUESTS_PER_MINUTE: '98',
     BASE_API_READ_ATTEMPTS: '10',
     BASE_API_RETRY_DELAY_MS: '2500',
@@ -153,6 +158,24 @@ test('Electron settings: user settings override .env and apply before core confi
   assert.equal(module.namespace.dryRun, 'false');
   assert.equal(module.namespace.testMode, 'false');
   assert.equal(module.namespace.getBaseApiRequestsPerMinute(), 98);
+  assert.equal(module.namespace.getAutomaticStockCap(), 10);
+  assert.equal(module.namespace.getAutomaticStockCap('25'), 25);
+  assert.equal(module.namespace.getAutomaticStockCap('101'), 10);
+});
+
+test('Automatic stock cap changes normalized Base quantity without changing supplier input', () => {
+  const previous = process.env.VUDOO_AUTOMATIC_STOCK_CAP;
+  const supplier = { id: 'STOCK-CAP-TEST', title: 'Test', price: '1 EUR', quantity: 42 };
+  try {
+    process.env.VUDOO_AUTOMATIC_STOCK_CAP = '25';
+    assert.equal(normalizeProduct(supplier).quantity, 25);
+    assert.equal(supplier.quantity, 42);
+    process.env.VUDOO_AUTOMATIC_STOCK_CAP = '5';
+    assert.equal(normalizeProduct(supplier).quantity, 5);
+  } finally {
+    if (previous === undefined) delete process.env.VUDOO_AUTOMATIC_STOCK_CAP;
+    else process.env.VUDOO_AUTOMATIC_STOCK_CAP = previous;
+  }
 });
 
 test('Electron bootstrap imports the catalog projection only after applying saved runtime settings', () => {

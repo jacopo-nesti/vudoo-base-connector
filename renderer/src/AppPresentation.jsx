@@ -18,6 +18,7 @@ import { selectFilteredIds, deselectFilteredIds, clearSelectedIds } from './cata
 export default function AppPresentation({ model: app }) {
   const [catalogSwitcherOpen, setCatalogSwitcherOpen] = useState(false);
   const [problemFocus, setProblemFocus] = useState(null);
+  const [settingsTab, setSettingsTab] = useState('technical');
   const problemFocusSequence = useRef(0);
   const { page, setPage, importScope, catalog, selectedIds, filteredProducts, updateSelection,
     visibleSelectedCount, catalogBusy, importLoading, fullImportLoading, manufacturerSyncLoading } = app;
@@ -27,7 +28,12 @@ export default function AppPresentation({ model: app }) {
   const importResult = importScope === 'full' ? app.fullImportResult : app.importResult;
   const importError = importScope === 'full' ? app.fullImportError : app.importError;
   const activeImportLoading = importScope === 'full' ? fullImportLoading : importLoading;
-  const navigate = next => { if (!importLoading && !fullImportLoading && !manufacturerSyncLoading) setPage(next); };
+  const navigate = next => {
+    if (importLoading || fullImportLoading || manufacturerSyncLoading) return;
+    if (next === 'base-settings') { setSettingsTab('base'); setPage('system-settings'); return; }
+    if (next === 'system-settings') setSettingsTab('technical');
+    setPage(next);
+  };
   const openProblem = problem => {
     if (problem.productId) {
       setProblemFocus({ productId: problem.productId, requestId: ++problemFocusSequence.current });
@@ -62,7 +68,7 @@ export default function AppPresentation({ model: app }) {
     </>}
     {page === 'system-diagnostics' && <SystemDiagnostics app={app} />}
     {page === 'system-problems' && <ProblemsPage app={app} onOpen={openProblem} onCatalog={() => setCatalogSwitcherOpen(true)} />}
-    {page === 'system-settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni</h1><p>Configurazione locale Vudoo e Base.com.</p></div></div><SettingsPanel scope="all" dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} /></div>}
+    {page === 'system-settings' && <SettingsPanel initialTab={settingsTab} dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} onDiagnostics={() => navigate('base-diagnostics')} filters={{ search: app.searchQuery, categoryFilter: app.categoryFilter, canonicalFilter: app.extraFilters?.canonicalFilter || '', availabilityFilter: app.extraFilters?.availabilityFilter || '', eanFilter: app.extraFilters?.eanFilter || '', imageFilter: app.extraFilters?.imageFilter || '' }} />}
     {page === 'system-help' && <HelpPage />}
     {page === 'base-overview' && <DashboardPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
     {page === 'base-manufacturers' && <ManufacturersPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
@@ -70,7 +76,7 @@ export default function AppPresentation({ model: app }) {
       problemFocus, onProblemFocusHandled: () => setProblemFocus(null),
       companyCode: app.companyCode, setCompanyCode: app.setCompanyCode, activeCatalogCode: app.activeCatalogCode, catalog,
       catalogLoading: app.catalogLoading, catalogError: app.catalogError, catalogBusy,
-      onCatalog: () => setCatalogSwitcherOpen(true), onFetch: app.handleFetchCatalog, searchQuery: app.searchQuery, setSearchQuery: app.setSearchQuery,
+      onCatalog: () => setCatalogSwitcherOpen(true), onSettingsColumns: () => { if (!importLoading && !fullImportLoading && !manufacturerSyncLoading) { setSettingsTab('columns'); setPage('system-settings'); } }, onFetch: app.handleFetchCatalog, searchQuery: app.searchQuery, setSearchQuery: app.setSearchQuery,
       categoryFilter: app.categoryFilter, setCategoryFilter: app.setCategoryFilter,
       categories: app.categories, canonicalCategories: app.canonicalCategories,
       extraFilters: app.extraFilters, setExtraFilters: app.setExtraFilters,
@@ -88,7 +94,6 @@ export default function AppPresentation({ model: app }) {
       onSelectInventory: app.handleSelectInventory, onRetryInventory: app.handleRetryInventory,
     }} />}
     {page === 'base-operations' && <OperationsPage catalog={catalog} selectedCount={selectedIds.length} catalogBusy={catalogBusy} dryRunMode={app.dryRunMode} fullPreflightLoading={app.fullPreflightLoading} preflightLoading={app.preflightLoading} manufacturerSyncLoading={manufacturerSyncLoading} manufacturerSyncError={app.manufacturerSyncError} manufacturerSyncResult={app.manufacturerSyncResult} onPreflightFull={app.handlePreflightFull} onPreflightSelected={app.handlePreflightSelected} onSync={app.handleManufacturerSync} onCatalog={() => navigate('base-catalog')} />}
-    {page === 'base-settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni Base.com</h1><p>Modalità e limiti dell'importazione.</p></div></div><SettingsPanel scope="base" dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} /></div>}
     {page === 'base-diagnostics' && <BaseDiagnosticsPage catalog={catalog} catalogCode={app.activeCatalogCode} dryRunMode={app.dryRunMode} baseConfigured={app.baseConfigured} />}
     {page === 'base-orders' && <OrdersBetaPage />}
     {['preflight', 'confirmation', 'result'].includes(page) && <ImportFlowPage stage={page} scope={importScope} result={page === 'result' ? importResult : preflightResult} preflightError={preflightError} importError={importError} preflightLoading={preflightLoading} importLoading={activeImportLoading} catalog={catalog} selectedCount={selectedIds.length} dryRunMode={app.dryRunMode} testModeEnabled={app.testModeEnabled} baseApiRequestsPerMinute={app.baseApiRequestsPerMinute} importReadStrategy={app.importReadStrategy} onBack={() => setPage(page === 'confirmation' ? 'preflight' : 'base-operations')} onContinue={() => setPage('confirmation')} onImport={importScope === 'full' ? app.handleImportFull : app.handleImportSelected} onCatalog={() => navigate('base-catalog')} />}

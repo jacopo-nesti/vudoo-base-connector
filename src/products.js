@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { normalizeInventoryTagNames } from './inventoryTags.js';
+import { getAutomaticStockCap } from './config.js';
 
 export async function getProducts() {
   const content = await readFile(new URL('../real_products.json', import.meta.url), 'utf8');
@@ -54,7 +55,7 @@ function getEffectiveQuantity(source) {
 
 function resolveAutomaticStock(source) {
   const supplierQuantity = getEffectiveQuantity(source);
-  return supplierQuantity == null ? undefined : Math.min(supplierQuantity, 10);
+  return supplierQuantity == null ? undefined : Math.min(supplierQuantity, getAutomaticStockCap());
 }
 
 export function normalizeProduct(source) {

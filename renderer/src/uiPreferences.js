@@ -1,4 +1,31 @@
 export const UI_KEY = 'vudoo.ui.tables.v1';
+const startupHandled = new Set();
+export function shouldApplyStartupView(channel) {
+  if (startupHandled.has(channel)) return false;
+  startupHandled.add(channel);
+  return true;
+}
+export function markStartupViewHandled(channel) { startupHandled.add(channel); }
+const layoutDefaults = Object.freeze({ sidebarCollapsed: false, pageSize: 50 });
+export function readLayoutPreferences(storage = globalThis.localStorage) {
+  try {
+    const all = JSON.parse(storage?.getItem(UI_KEY) || '{}');
+    return {
+      sidebarCollapsed: typeof all?.layout?.sidebarCollapsed === 'boolean' ? all.layout.sidebarCollapsed : layoutDefaults.sidebarCollapsed,
+      pageSize: Number.isInteger(all?.layout?.pageSize) && all.layout.pageSize >= 10 && all.layout.pageSize <= 200 ? all.layout.pageSize : layoutDefaults.pageSize,
+    };
+  } catch { return { ...layoutDefaults }; }
+}
+export function writeLayoutPreferences(patch, storage = globalThis.localStorage) {
+  try {
+    const all = JSON.parse(storage?.getItem(UI_KEY) || '{}');
+    const layout = { ...readLayoutPreferences(storage), ...patch };
+    if (typeof layout.sidebarCollapsed !== 'boolean' || !Number.isInteger(layout.pageSize) || layout.pageSize < 10 || layout.pageSize > 200) return false;
+    storage.setItem(UI_KEY, JSON.stringify({ ...all, schemaVersion: 1, layout }));
+    globalThis.dispatchEvent?.(new Event('vudoo:ui-preferences'));
+    return true;
+  } catch { return false; }
+}
 export const columnDefinitions = {
   base: { ean:'EAN', brand:'Brand', category:'Categoria', mpn:'MPN', price:'Prezzo', stock:'Scorta' },
 };
@@ -24,7 +51,8 @@ export function readTableState(channel, storage) {
 export function writeTableState(channel, state, storage) {
   try {
     storage ??= globalThis.localStorage;
-    storage.setItem(UI_KEY, JSON.stringify({schemaVersion:1,[channel]:{...sanitizeSnapshot(channel,state),filters:{}, views:state.views.slice(0,30).map(v => ({id:v.id,name:v.name.slice(0,60),...sanitizeSnapshot(channel,v)})),startup:state.startup || ''}}));
+    const all = JSON.parse(storage.getItem(UI_KEY) || '{}');
+    storage.setItem(UI_KEY, JSON.stringify({...all,schemaVersion:1,[channel]:{...sanitizeSnapshot(channel,state),filters:{}, views:state.views.slice(0,30).map(v => ({id:v.id,name:v.name.slice(0,60),...sanitizeSnapshot(channel,v)})),startup:state.startup || ''}}));
     return true;
   } catch { return false; }
 }

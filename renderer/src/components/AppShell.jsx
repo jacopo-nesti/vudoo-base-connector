@@ -1,7 +1,8 @@
 import WorkspaceTools from './WorkspaceTools.jsx';
 import vudooLogo from '../assets/vudoo-logo-horizontal-white.png';
 import OperatingModeControl from './OperatingModeControl.jsx';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { readLayoutPreferences, writeLayoutPreferences } from '../uiPreferences.js';
 
 const icons = {
   overview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
@@ -17,7 +18,6 @@ const sections = [
   { page: 'base-overview', label: 'Panoramica', icon: 'overview' },
   { page: 'base-manufacturers', label: 'Produttori', icon: 'manufacturers' },
   { page: 'base-catalog', label: 'Prodotti', icon: 'catalog', heading: 'CATALOGO' },
-  { page: 'system-problems', label: 'Problemi', icon: 'diagnostics' },
   { page: 'base-operations', label: 'Import / Operazioni', icon: 'operations', heading: 'BASE.COM' },
   { page: 'base-orders', label: 'Ordini', icon: 'orders' },
   { page: 'base-diagnostics', label: 'Diagnostica', icon: 'diagnostics' },
@@ -28,10 +28,19 @@ const activePage = page => ['preflight', 'confirmation', 'result'].includes(page
 function Icon({ name }) { return <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>; }
 
 export default function AppShell({ page, onNavigate, supplier, dryRunMode, onSetOperatingMode, app, onCatalog, children }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLayoutPreferences().sidebarCollapsed);
+  useEffect(() => {
+    const sync = () => setSidebarCollapsed(readLayoutPreferences().sidebarCollapsed);
+    window.addEventListener('vudoo:ui-preferences', sync);
+    return () => window.removeEventListener('vudoo:ui-preferences', sync);
+  }, []);
+  function toggleSidebar() {
+    const next = !sidebarCollapsed;
+    if (writeLayoutPreferences({ sidebarCollapsed: next })) setSidebarCollapsed(next);
+  }
   return <div className={`app-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
     <aside className="sidebar" aria-label="Navigazione principale">
-      <div className="sidebar-logo"><img className="brand-mark" src={vudooLogo} alt="" /><span><strong>Vudoo Product Manager</strong><small>Catalogo e Base.com</small></span><button className="sidebar-collapse-toggle" type="button" aria-label={sidebarCollapsed ? 'Espandi navigazione' : 'Comprimi navigazione'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}>{sidebarCollapsed ? '›' : '‹'}</button></div>
+      <div className="sidebar-logo"><img className="brand-mark" src={vudooLogo} alt="" /><span><strong>Vudoo Product Manager</strong><small>Catalogo e Base.com</small></span><button className="sidebar-collapse-toggle" type="button" aria-label={sidebarCollapsed ? 'Espandi navigazione' : 'Comprimi navigazione'} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>{sidebarCollapsed ? '›' : '‹'}</button></div>
       <nav className="sidebar-nav" aria-label="Sezioni">{sections.map(item => <div key={item.page}>{item.heading && <div className="sidebar-section-title">{item.heading}</div>}<button type="button" title={item.label} aria-label={item.label} className={`sidebar-item ${activePage(page) === item.page ? 'active' : ''}`} aria-current={activePage(page) === item.page ? 'page' : undefined} onClick={() => onNavigate(item.page)}><Icon name={item.icon} /><span>{item.label}</span></button></div>)}</nav>
       <div className="sidebar-footer">{supplier && <div className="supplier-block"><span className="sidebar-section-title">Catalogo attivo</span><strong title={supplier}>{supplier}</strong></div>}<OperatingModeControl dryRunMode={dryRunMode} onSetOperatingMode={onSetOperatingMode} disabled={Boolean(app.importLoading || app.fullImportLoading || app.manufacturerSyncLoading)} /></div>
     </aside>

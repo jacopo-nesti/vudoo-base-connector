@@ -48,6 +48,13 @@ export function getVudooTimeoutConfig(raw = process.env.VUDOO_TIMEOUT_MS) {
   return { ms: value, invalid: false };
 }
 
+export function getAutomaticStockCap(raw = process.env.VUDOO_AUTOMATIC_STOCK_CAP) {
+  if (raw == null || String(raw).trim() === '') return 10;
+  const text = String(raw).trim();
+  const value = Number(text);
+  return /^\d+$/.test(text) && Number.isSafeInteger(value) && value >= 1 && value <= 100 ? value : 10;
+}
+
 export function getBaseApiRequestsPerMinute() {
   const raw = process.env.BASE_API_REQUESTS_PER_MINUTE;
   if (raw == null || raw.trim() === '') return 95;

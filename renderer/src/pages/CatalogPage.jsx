@@ -1,5 +1,5 @@
 import TableTools, { useTablePreferences, SortHeading } from '../components/TableTools.jsx';
-import { sortProductRows } from '../uiPreferences.js';
+import { readLayoutPreferences, sortProductRows } from '../uiPreferences.js';
 import ProductInspector from '../components/ProductInspector.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { isSelectableId, variantDetails } from '../catalogFilters.js';
@@ -37,7 +37,7 @@ export default function CatalogPage({ model }) {
 
   useEffect(() => { setDetailProduct(null); setInspectorProduct(null); setBulkOpen(false); }, [activeCatalogCode]);
   useEffect(() => { setPageIndex(0); }, [searchQuery, categoryFilter, extraFilters, activeCatalogCode]);
-  const pageSize = 50;
+  const pageSize = readLayoutPreferences().pageSize;
   const pages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
   const orderedProducts = sortProductRows(filteredProducts, sort, 'base');
   const visiblePage = orderedProducts.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
@@ -87,7 +87,7 @@ export default function CatalogPage({ model }) {
         </div>
       </section>
 
-      <TableTools channel="base" preferences={tablePreferences} filters={currentFilters} onApply={applyView} filtered={hasActiveFilters} onReset={() => applyView({})} presets={[{id:'all',name:'Tutti',filters:{}}]} />
+      <TableTools channel="base" preferences={tablePreferences} filters={currentFilters} onApply={applyView} filtered={hasActiveFilters} onReset={() => applyView({})} onCustomize={model.onSettingsColumns} presets={[{id:'all',name:'Tutti',filters:{}}]} />
       <p className="catalog-count">{catalog.totalProducts} nel catalogo · {filteredProducts.length} visualizzati · {selectedIds.length} selezionati{selectedIds.length > visibleSelectedCount && <> · {selectedIds.length - visibleSelectedCount} selezionati fuori dai filtri attuali</>}</p>
       {bulkFeedback && <p className="alert alert-success" role="status">{bulkFeedback}</p>}
 
