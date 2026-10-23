@@ -17,9 +17,10 @@ export async function preflightFullCatalog(activeCatalog, overrides = {}, compan
     durationMs: Math.max(0, Date.now() - startedAt) };
 }
 
-export async function importFullCatalog(activeCatalog, overrides = {}, companyCode) {
+export async function importFullCatalog(activeCatalog, overrides = {}, companyCode, mediaHooks = {}) {
   const startedAt = Date.now();
   const prepared = prepareEffectiveFullCatalog(requireCatalog(activeCatalog), overrides, companyCode);
+  Object.assign(prepared, mediaHooks);
   return { ...toImportResult(await importPreparedVudooCatalog(prepared)),
     durationMs: Math.max(0, Date.now() - startedAt) };
 }

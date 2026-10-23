@@ -5,7 +5,7 @@ import {
   getBaseProductSummaries, getBaseProductsData, callBase,
 } from './baseApi.js';
 import { createInventoryTagService } from './inventoryTags.js';
-import { normalizeProduct, buildBasePayload, hasProductChanged, assertVudooSkuCompatibility } from './products.js';
+import { normalizeProduct, buildBasePayload, hasProductChanged, assertVudooSkuCompatibility, planManualImageData } from './products.js';
 import { getManufacturerMap, ensureManufacturer } from './manufacturers.js';
 import { getGlobalCategoryIndex, resolveGlobalCategoryPath } from './categories.js';
 import { runPreflightCheck } from './preflight.js';
@@ -28,6 +28,7 @@ export async function runImport(prepared) {
   let feedDuplicates = 0;
   const errorSkus = [];
   const tagErrors = [];
+  const imageErrors = [];
   const simulatedSkus = [];
   const uncertainSkus = [];
   let warehouseStatus = 'non selezionato';
@@ -50,6 +51,7 @@ export async function runImport(prepared) {
     errors,
     errorSkus: [...errorSkus],
     tagErrors: [...tagErrors],
+    imageErrors: [...imageErrors],
     uncertainSkus: [...uncertainSkus],
     eanWarningsCount: preflightData?.eanWarningsCount ?? 0,
     categorySummary: preflightData?.categoryAnalysis ? {
@@ -134,6 +136,12 @@ export async function runImport(prepared) {
         }
         if (existingDetails) assertVudooSkuCompatibility(product, existingDetails);
 
+        if (product.manual_images?.length && preflightData.resolveManualImages) {
+          const pending = await preflightData.resolveManualImages(product, existingDetails,
+            existingProduct?.product_id ?? null);
+          product.manual_image_data = planManualImageData(product, existingDetails, pending);
+        }
+
         const tagPlan = await tagService.ensureInventoryTags(product.tags, { allowCreate: true });
         if (tagPlan.names !== undefined) product.tags = tagPlan.names;
         if (tagPlan.wouldCreate.length) log(`[DRY_RUN] Product Tags da creare: ${tagPlan.wouldCreate.join(', ')}`);
@@ -164,6 +172,8 @@ export async function runImport(prepared) {
               continue;
             }
             updated++;
+            if (product.manual_image_data?.length) await preflightData.onManualImagesUploaded?.(
+              product, existingProduct.product_id, product.manual_image_data);
             log(`SUCCESS (Aggiornato) - product_id: ${existingProduct.product_id}`);
           } else {
             if (pendingReferences) {
@@ -184,6 +194,8 @@ export async function runImport(prepared) {
           continue;
         }
         created++;
+        if (product.manual_image_data?.length) await preflightData.onManualImagesUploaded?.(
+          product, result.product_id, product.manual_image_data);
         log(`SUCCESS (Creato) - product_id: ${result.product_id}`);
 
       } catch (error) {
@@ -198,6 +210,10 @@ export async function runImport(prepared) {
           sku: sourceProduct?.id ?? '(SKU assente)', code: error.code,
           tagName: error.tagName ?? null, message: redactToken(error.message),
         });
+        if (['IMAGE_FILE_MISSING', 'INVALID_IMAGE', 'OPTIMIZATION_FAILED'].includes(error.code)) {
+          imageErrors.push({ sku: sourceProduct?.id ?? '(SKU assente)', code: error.code,
+            message: redactToken(error.message) });
+        }
         log(`ERROR: ${error.message}`);
       }
     }

@@ -1,6 +1,7 @@
 import WorkspaceTools from './WorkspaceTools.jsx';
 import vudooLogo from '../assets/vudoo-logo-horizontal-white.png';
 import OperatingModeControl from './OperatingModeControl.jsx';
+import { useState } from 'react';
 
 const icons = {
   overview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
@@ -27,10 +28,11 @@ const activePage = page => ['preflight', 'confirmation', 'result'].includes(page
 function Icon({ name }) { return <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>; }
 
 export default function AppShell({ page, onNavigate, supplier, dryRunMode, onSetOperatingMode, app, onCatalog, children }) {
-  return <div className="app-layout">
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  return <div className={`app-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
     <aside className="sidebar" aria-label="Navigazione principale">
-      <div className="sidebar-logo"><img className="brand-mark" src={vudooLogo} alt="" /><span><strong>Vudoo Product Manager</strong><small>Catalogo e Base.com</small></span></div>
-      <nav className="sidebar-nav" aria-label="Sezioni">{sections.map(item => <div key={item.page}>{item.heading && <div className="sidebar-section-title">{item.heading}</div>}<button type="button" className={`sidebar-item ${activePage(page) === item.page ? 'active' : ''}`} aria-current={activePage(page) === item.page ? 'page' : undefined} onClick={() => onNavigate(item.page)}><Icon name={item.icon} /><span>{item.label}</span></button></div>)}</nav>
+      <div className="sidebar-logo"><img className="brand-mark" src={vudooLogo} alt="" /><span><strong>Vudoo Product Manager</strong><small>Catalogo e Base.com</small></span><button className="sidebar-collapse-toggle" type="button" aria-label={sidebarCollapsed ? 'Espandi navigazione' : 'Comprimi navigazione'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}>{sidebarCollapsed ? '›' : '‹'}</button></div>
+      <nav className="sidebar-nav" aria-label="Sezioni">{sections.map(item => <div key={item.page}>{item.heading && <div className="sidebar-section-title">{item.heading}</div>}<button type="button" title={item.label} aria-label={item.label} className={`sidebar-item ${activePage(page) === item.page ? 'active' : ''}`} aria-current={activePage(page) === item.page ? 'page' : undefined} onClick={() => onNavigate(item.page)}><Icon name={item.icon} /><span>{item.label}</span></button></div>)}</nav>
       <div className="sidebar-footer">{supplier && <div className="supplier-block"><span className="sidebar-section-title">Catalogo attivo</span><strong title={supplier}>{supplier}</strong></div>}<OperatingModeControl dryRunMode={dryRunMode} onSetOperatingMode={onSetOperatingMode} disabled={Boolean(app.importLoading || app.fullImportLoading || app.manufacturerSyncLoading)} /></div>
     </aside>
     <header className="topbar">

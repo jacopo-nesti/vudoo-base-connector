@@ -52,6 +52,11 @@ function getEffectiveQuantity(source) {
   return undefined;
 }
 
+function resolveAutomaticStock(source) {
+  const supplierQuantity = getEffectiveQuantity(source);
+  return supplierQuantity == null ? undefined : Math.min(supplierQuantity, 10);
+}
+
 export function normalizeProduct(source) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
     throw new Error('Il prodotto deve essere un oggetto JSON.');
@@ -104,7 +109,7 @@ export function normalizeProduct(source) {
       normalized.shipping.price = parseFeedNumber(source.shipping.price, 'EUR', 'shipping.price');
     }
   }
-  const quantity = getEffectiveQuantity(source);
+  const quantity = resolveAutomaticStock(source);
   if (quantity != null) normalized.quantity = quantity;
   else delete normalized.quantity;
   return normalized;
@@ -182,8 +187,38 @@ export function buildBasePayload(product, config) {
     payload.images ??= {};
     payload.images[String(index + 1)] = `url:${image}`;
   }
+  if ((product.manual_images?.length ?? 0) + additional.length + (product.image_link ? 1 : 0) > 16) {
+    throw new Error('Base.com supporta al massimo 16 immagini effettive per prodotto.');
+  }
+  for (const image of product.manual_image_data ?? []) {
+    if (!Number.isInteger(image.position) || image.position < 1 || image.position > 16 ||
+        typeof image.data !== 'string' || !image.data.startsWith('data:')) {
+      throw new Error('Immagine manuale Base.com non preparata correttamente.');
+    }
+    payload.images ??= {};
+    const slot = String(image.position - 1);
+    if (payload.images[slot]) throw new Error('Slot immagine Base.com già occupato dal catalogo Vudoo.');
+    payload.images[slot] = image.data;
+  }
   if (product.tags != null) payload.tags = normalizeInventoryTagNames(product.tags);
   return payload;
+}
+
+export function planManualImageData(product, existing, pending) {
+  const originalLast = (product.image_link ? 1 : 0) +
+    (Array.isArray(product.additional_image_link) ? product.additional_image_link.length
+      : product.additional_image_link ? 1 : 0);
+  const occupied = new Set(Object.keys(existing?.images ?? {})
+    .filter(key => /^([1-9]|1[0-6])$/.test(key) && existing.images[key]).map(Number));
+  const assignments = [];
+  for (const image of pending) {
+    let position = existing ? Math.max(2, originalLast + 1) : Math.max(1, originalLast + 1);
+    while (occupied.has(position)) position++;
+    if (position > 16) throw new Error('Limite Base.com di 16 immagini raggiunto: nessuna foto esistente sarà sovrascritta.');
+    occupied.add(position);
+    assignments.push({ ...image, position });
+  }
+  return assignments;
 }
 
 export function detectAndFilterDuplicates(products) {
@@ -206,7 +241,7 @@ export function detectAndFilterDuplicates(products) {
             throw new Error(`SKU duplicato ${sku} con valori discordanti: ${field}.`);
           }
         }
-        if (getEffectiveQuantity(first) !== getEffectiveQuantity(product)) {
+        if (getEffectiveQuantity(first.source ?? first) !== getEffectiveQuantity(product.source ?? product)) {
           throw new Error(`SKU duplicato ${sku} con valori discordanti: quantity.`);
         }
         const count = duplicatesMap.get(sku) ?? 1;
@@ -279,11 +314,17 @@ export function buildBaseUpdatePayload(product, existing, config) {
   if (desired.tags && JSON.stringify(desired.tags) !== JSON.stringify(existing.tags ?? [])) changes.tags = desired.tags;
   if (desired.images) {
     const images = {};
+    const manualSlots = new Set((product.manual_image_data ?? []).map(image => String(image.position - 1)));
     for (const [position, value] of Object.entries(desired.images)) {
+      if (manualSlots.has(position)) {
+        if (existing.images?.[String(Number(position) + 1)]) throw new Error('Slot immagine Base.com non più libero: ripeti il preflight.');
+        images[position] = value;
+        continue;
+      }
       const current = existing.images?.[String(Number(position) + 1)];
       const url = typeof current === 'string' ? current.replace(/^url:/, '') : '';
-      const isBaseImage = URL.canParse(url) && new URL(url).hostname === 'upload.cdn.baselinker.com';
-      if (!isBaseImage && url !== value.replace(/^url:/, '')) images[position] = value;
+      // A changed supplier URL must never replace an already occupied Base slot implicitly.
+      if (!url) images[position] = value;
     }
     if (Object.keys(images).length) changes.images = images;
   }

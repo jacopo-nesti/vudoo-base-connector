@@ -54,7 +54,6 @@ export default function AppPresentation({ model: app }) {
     {basePages.includes(page) && <>
       {app.manufacturerDirectoryWarning && <div className="alert alert-warning global-alert" role="alert">{app.manufacturerDirectoryWarning}</div>}
       {page !== 'confirmation' && page !== 'base-overview' && app.dryRunMode === true && <div className="alert alert-warning global-alert"><strong>MODALITÀ SIMULAZIONE: nessuna modifica verrà inviata a Base.com.</strong></div>}
-      {page !== 'confirmation' && app.dryRunMode === false && <div className="alert alert-danger global-alert" role="alert"><strong>ATTENZIONE: modalità reale attiva. L’importazione può modificare Base.com.</strong></div>}
       {app.dryRunMode === null && <div className="alert alert-danger global-alert" role="alert">Configurazione della modalità di importazione non valida. Controlla DRY_RUN nelle impostazioni e riavvia l’applicazione.</div>}
       {app.dryRunMode === undefined && !app.runtimeModeError && <div className="alert alert-info global-alert">Verifica della modalità di importazione in corso…</div>}
       {app.testModeEnabled === true && <div className="alert alert-info global-alert"><strong>Limite di prova attivo: l’import elabora un solo prodotto. La modalità operativa resta {app.dryRunMode ? 'Simulazione' : 'Reale'}.</strong></div>}
@@ -65,8 +64,8 @@ export default function AppPresentation({ model: app }) {
     {page === 'system-problems' && <ProblemsPage app={app} onOpen={openProblem} onCatalog={() => setCatalogSwitcherOpen(true)} />}
     {page === 'system-settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni</h1><p>Configurazione locale Vudoo e Base.com.</p></div></div><SettingsPanel scope="all" dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} /></div>}
     {page === 'system-help' && <HelpPage />}
-    {page === 'base-overview' && <DashboardPage catalog={catalog} dryRunMode={app.dryRunMode} baseConfigured={app.baseConfigured} onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
-    {page === 'base-manufacturers' && <ManufacturersPage onNavigate={navigate} />}
+    {page === 'base-overview' && <DashboardPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
+    {page === 'base-manufacturers' && <ManufacturersPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
     {page === 'base-catalog' && <CatalogPage model={{
       problemFocus, onProblemFocusHandled: () => setProblemFocus(null),
       companyCode: app.companyCode, setCompanyCode: app.setCompanyCode, activeCatalogCode: app.activeCatalogCode, catalog,
@@ -84,12 +83,13 @@ export default function AppPresentation({ model: app }) {
       onUndo: app.undoLastSelectionChange, canUndo: app.previousSelectedIds !== null,
       onPreflightSelected: app.handlePreflightSelected, preflightLoading: app.preflightLoading,
       onSaveProduct: app.handleSaveProductFields,
+      onMediaChange: app.handleLocalMediaChanged,
       onBulkEditProducts: app.handleBulkEditProducts,
       onSelectInventory: app.handleSelectInventory, onRetryInventory: app.handleRetryInventory,
     }} />}
     {page === 'base-operations' && <OperationsPage catalog={catalog} selectedCount={selectedIds.length} catalogBusy={catalogBusy} dryRunMode={app.dryRunMode} fullPreflightLoading={app.fullPreflightLoading} preflightLoading={app.preflightLoading} manufacturerSyncLoading={manufacturerSyncLoading} manufacturerSyncError={app.manufacturerSyncError} manufacturerSyncResult={app.manufacturerSyncResult} onPreflightFull={app.handlePreflightFull} onPreflightSelected={app.handlePreflightSelected} onSync={app.handleManufacturerSync} onCatalog={() => navigate('base-catalog')} />}
     {page === 'base-settings' && <div className="page-stack"><div className="page-heading"><div><h1>Impostazioni Base.com</h1><p>Modalità e limiti dell'importazione.</p></div></div><SettingsPanel scope="base" dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} /></div>}
-    {page === 'base-diagnostics' && <BaseDiagnosticsPage catalog={catalog} catalogCode={app.activeCatalogCode} />}
+    {page === 'base-diagnostics' && <BaseDiagnosticsPage catalog={catalog} catalogCode={app.activeCatalogCode} dryRunMode={app.dryRunMode} baseConfigured={app.baseConfigured} />}
     {page === 'base-orders' && <OrdersBetaPage />}
     {['preflight', 'confirmation', 'result'].includes(page) && <ImportFlowPage stage={page} scope={importScope} result={page === 'result' ? importResult : preflightResult} preflightError={preflightError} importError={importError} preflightLoading={preflightLoading} importLoading={activeImportLoading} catalog={catalog} selectedCount={selectedIds.length} dryRunMode={app.dryRunMode} testModeEnabled={app.testModeEnabled} baseApiRequestsPerMinute={app.baseApiRequestsPerMinute} importReadStrategy={app.importReadStrategy} onBack={() => setPage(page === 'confirmation' ? 'preflight' : 'base-operations')} onContinue={() => setPage('confirmation')} onImport={importScope === 'full' ? app.handleImportFull : app.handleImportSelected} onCatalog={() => navigate('base-catalog')} />}
   </AppShell>;

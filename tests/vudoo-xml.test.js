@@ -218,8 +218,8 @@ for (const [tax, expected] of [[10, 10], ['20', 20], ['22', 22], [0, 0], [undefi
 }
 
 for (const [values, expected] of [
-  [{ quantity: 50 }, 50], [{ quantity: '234' }, 234], [{ quantity: 999 }, 999],
-  [{ quantity: 0 }, 0], [{ quantity: 50, availability: 'out of stock' }, 50],
+  ...[0, 1, 2, 6, 6.5, 9, 10, 11, 50, 999].map(quantity => [{ quantity }, Math.min(quantity, 10)]),
+  [{ quantity: '234' }, 10], [{ quantity: 50, availability: 'out of stock' }, 10],
   [{ availability: 'in stock' }, 10], [{ availability: 'out of stock' }, 0],
   [{ quantity: '', availability: 'in stock' }, 10], [{ quantity: null, availability: 'in stock' }, 10],
   [{ availability: 'unknown' }, undefined],
@@ -230,6 +230,22 @@ for (const [values, expected] of [
     assert.equal(buildBasePayload(product, config).stock?.bl_30, expected);
   });
 }
+
+test('Vudoo XML: CREATE e UPDATE usano lo stesso stock automatico, senza alterare la sorgente', () => {
+  const original = { ...source, quantity: 50 };
+  const product = normalizeVudooProduct(original);
+  assert.equal(original.quantity, 50);
+  assert.equal(product.source.quantity, 50);
+  assert.deepEqual(buildBasePayload(product, config).stock, { bl_30: 10 });
+  const existing = { ...buildBasePayload(product, config), stock: { bl_30: 50 } };
+  assert.deepEqual(buildBaseUpdatePayload(product, existing, config), {
+    inventory_id: 10, stock: { bl_30: 10 },
+  });
+  const lowStock = normalizeVudooProduct({ ...source, quantity: 4 });
+  assert.deepEqual(buildBasePayload(lowStock, config).stock, { bl_30: 4 });
+  const zeroStock = normalizeVudooProduct({ ...source, quantity: 0 });
+  assert.deepEqual(buildBasePayload(zeroStock, config).stock, { bl_30: 0 });
+});
 
 for (const unit of ['kg', 'Kg', 'KG']) {
   test(`Vudoo XML: peso ${unit} e shipping weight distinti`, () => {

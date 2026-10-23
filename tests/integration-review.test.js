@@ -1211,7 +1211,7 @@ test('XML remoto: prodotto invariato salta, cambiamento aggiorna solo stock con 
   const changed = await remoteSandbox({ existing: true, details: { ...saved, stock: { bl_30: 1 } }, categories, env: { DRY_RUN: 'false' } });
   const writes = changed.calls.filter(call => call.method === 'addInventoryProduct');
   assert.equal(writes.length, 1);
-  assert.equal(JSON.stringify(writes[0].parameters), JSON.stringify({ inventory_id: 10, stock: { bl_30: 234 }, product_id: 60 }));
+  assert.equal(JSON.stringify(writes[0].parameters), JSON.stringify({ inventory_id: 10, stock: { bl_30: 10 }, product_id: 60 }));
 });
 
 test('XML remoto: Vudoo SKU incompatibile blocca prima di categorie, produttori e prodotto', async () => {
@@ -1281,7 +1281,7 @@ test('XML remoto: CREATE simulate con mock riusano produttore, omettono categori
   assert.equal(Object.hasOwn(creates[0].parameters, 'category_id'), false);
   assert.equal(Object.hasOwn(creates[1].parameters, 'category_id'), false);
   assert.equal(creates[0].parameters.manufacturer_id, creates[1].parameters.manufacturer_id);
-  assert.equal(creates[0].parameters.stock.bl_30, 234);
+  assert.equal(creates[0].parameters.stock.bl_30, 10);
   assert.equal(creates[0].parameters.text_fields.features.MPN, 'MANUFACTURER-PART');
   assert.equal(creates[0].parameters.sku, '389578');
   assert.equal(creates[1].parameters.sku, '389579');
@@ -1508,13 +1508,13 @@ test('Duplicati: availability discordante senza quantity genera sempre conflitto
   assert.throws(() => detectAndFilterDuplicates([inStock, outOfStock]), /discordanti: quantity/);
   assert.throws(() => detectAndFilterDuplicates([outOfStock, inStock]), /discordanti: quantity/);
 });
-test('Duplicati: confronta lo stock effettivo e mantiene la precedenza della quantity', () => {
+test('Duplicati: confronta lo stock Vudoo originario e mantiene la precedenza della quantity', () => {
   const sameQuantity = detectAndFilterDuplicates([
     { ...source, quantity: 25, availability: 'in stock' },
     { ...source, quantity: '25', availability: 'out of stock' },
   ]);
   assert.equal(sameQuantity.uniqueProducts.length, 1);
-  assert.equal(normalizeProduct(sameQuantity.uniqueProducts[0]).quantity, 25);
+  assert.equal(normalizeProduct(sameQuantity.uniqueProducts[0]).quantity, 10);
 
   const zero = detectAndFilterDuplicates([
     { ...source, quantity: 0 },
@@ -1527,7 +1527,7 @@ test('Duplicati: confronta lo stock effettivo e mantiene la precedenza della qua
     { ...source, quantity: 10 },
     { ...source, quantity: 20 },
   ]), /discordanti: quantity/);
-  assert.equal(normalizeProduct({ ...source, quantity: 200 }).quantity, 200);
+  assert.equal(normalizeProduct({ ...source, quantity: 200 }).quantity, 10);
 });
 test('Duplicati: quantity invalida non usa il fallback availability', () => {
   const invalid = { ...source, quantity: 'abc', availability: 'in stock' };
@@ -1544,19 +1544,19 @@ test('Payload: warehouse reale, ID stretti, nessuno stock inventato', () => {
 test('Quantita: valori reali, stringhe e fallback availability', () => {
   const cases = [
     [{ quantity: 0 }, 0],
-    [{ quantity: 25 }, 25],
-    [{ quantity: 200 }, 200],
-    [{ quantity: '25' }, 25],
+    [{ quantity: 25 }, 10],
+    [{ quantity: 200 }, 10],
+    [{ quantity: '25' }, 10],
     [{ quantity: '', availability: 'in stock' }, 10],
     [{ quantity: null, availability: 'in stock' }, 10],
     [{ availability: 'in stock' }, 10],
     [{ availability: 'out of stock' }, 0],
-    [{ quantity: 35, availability: 'in stock' }, 35],
+    [{ quantity: 35, availability: 'in stock' }, 10],
   ];
   for (const [values, expected] of cases) {
     assert.equal(normalizeProduct({ ...source, ...values }).quantity, expected);
   }
-  assert.equal(normalizeProduct({ ...source, quantity: 200, availability: 'in stock' }).quantity, 200);
+  assert.equal(normalizeProduct({ ...source, quantity: 200, availability: 'in stock' }).quantity, 10);
 });
 test('Stock: fallback richiede warehouse e UPDATE resta selettivo', () => {
   const product = normalizeProduct({ ...source, availability: 'in stock' });
@@ -2548,4 +2548,49 @@ test('Rate limiter: il limite configurato 200 viene applicato realmente', async 
   });
   assert.equal(result.calls[199].at < 60000, true);
   assert.equal(result.calls[200].at, 60000);
+});
+
+test('immagine manuale: import REAL usa il normale CREATE con gallery Vudoo + locale', async () => {
+  const item = { ...normalizeProduct({ ...source, image_link: 'https://vudoo.test/main.jpg' }),
+    manual_images: [{ id: 'local-1', name: 'foto.jpg', mimeType: 'image/jpeg', size: 8 }] };
+  let marked = null;
+  const result = await sandbox({ entry: '../src/importer.js', env: { DRY_RUN: 'false', TEST_MODE: 'false' },
+    action: async api => {
+      const imported = await api.runImport({ inventory: config.inventory, priceGroup: config.priceGroup,
+        warehouse: config.warehouse, products: [item], selectedProducts: [item],
+        normalizedProducts: true, feedDuplicates: 0,
+        resolveManualImages: async () => [{ id: 'local-1', data: 'data:AAAA' }],
+        onManualImagesUploaded: async (_product, productId, assignments) => { marked = { productId, assignments }; } });
+      assert.equal(imported.created, 1);
+    } });
+  const sent = result.calls.find(call => call.method === 'addInventoryProduct').parameters;
+  assert.deepEqual(Object.keys(sent.images), ['0', '1']);
+  assert.equal(sent.images['0'], 'url:https://vudoo.test/main.jpg');
+  assert.equal(sent.images['1'], 'data:AAAA');
+  assert.equal(marked.productId, 60);
+  assert.equal(marked.assignments[0].position, 2);
+});
+
+test('immagine manuale: UPDATE REAL preserva galleria Base; Simulation non scrive', async () => {
+  for (const simulation of [false, true]) {
+    const item = { ...normalizeProduct(source), manual_images: [{ id: 'local-1', name: 'foto.jpg',
+      mimeType: 'image/jpeg', size: 8 }] };
+    let marked = 0;
+    const result = await sandbox({ entry: '../src/importer.js', existing: true,
+      details: { ...details, images: { 1: 'https://base.test/main.jpg', 2: 'https://base.test/extra.jpg' } },
+      env: { DRY_RUN: String(simulation), TEST_MODE: 'false' },
+      action: async api => {
+        const imported = await api.runImport({ inventory: config.inventory, priceGroup: config.priceGroup,
+          warehouse: config.warehouse, products: [item], selectedProducts: [item],
+          normalizedProducts: true, feedDuplicates: 0,
+          resolveManualImages: async () => [{ id: 'local-1', data: 'data:AAAA' }],
+          onManualImagesUploaded: async () => { marked++; } });
+        assert.equal(simulation ? imported.simulated : imported.updated, 1);
+      } });
+    const writes = result.calls.filter(call => call.method === 'addInventoryProduct');
+    assert.equal(writes.length, simulation ? 0 : 1);
+    assert.equal(marked, simulation ? 0 : 1);
+    if (!simulation) assert.deepEqual(writes[0].parameters.images, { 2: 'data:AAAA' });
+    assert.ok(result.logs.every(line => !line.includes('data:AAAA')));
+  }
 });

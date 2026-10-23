@@ -28,4 +28,5 @@ test('pagina Produttori usa solo lettura IPC e mostra statistiche, Inventory ed 
   assert.doesNotMatch(page, /getInventories|callBase|node:sqlite|node:fs/);
   for (const label of ['Nessun produttore salvato', 'Inventory associato', 'Inventory non associato',
     'lastProductCount', 'lastLoadedAt']) assert.ok(page.includes(label), label);
+  assert.match(page, /onClick=\{\(\) => loadCatalog\(item\)\}>Carica catalogo/);
 });

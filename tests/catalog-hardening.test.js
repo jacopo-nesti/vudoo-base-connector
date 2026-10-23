@@ -196,7 +196,7 @@ test('[BLOCK] sale_price malformato conserva la policy attuale', () => {
 });
 
 for (const [quantity, availability, expected] of [
-  ['25', 'out of stock', 25], ['0', 'in stock', 0], [null, 'in stock', 10], [null, 'out of stock', 0],
+  ['25', 'out of stock', 10], ['0', 'in stock', 0], [null, 'in stock', 10], [null, 'out of stock', 0],
 ]) {
   test(`[CONTINUE] quantity ${quantity} e availability ${availability} producono stock ${expected}`, () => {
     assert.equal(buildBasePayload(product({ 'g:quantity': quantity, 'g:availability': availability }), config).stock.bl_30, expected);

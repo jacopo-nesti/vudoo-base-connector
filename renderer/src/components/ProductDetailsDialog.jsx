@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { PRODUCT_FIELDS, BASE_OVERRIDE_FIELDS, validateFieldInput } from '../../../src/productSchema.js';
 import { editorFieldScope, editorFieldValue } from './productFieldValues.js';
+import ManualImageEditor from './ManualImageEditor.jsx';
 
 const sections = ['Identità', 'Contenuto', 'Commerciale', 'Classificazione', 'Media', 'Fisico', 'Logistica', 'Marca e dettagli', 'Base.com'];
 const originLabels = { supplier: 'Originale supplier', canonical: 'Normalizzato', manual: 'Override manuale', marketplace: 'Override Base' };
@@ -8,7 +9,7 @@ const symbols = { PASS: '✓', WARNING: '⚠', BLOCKING: '✕' };
 const display = value => Array.isArray(value) ? value.join('\n') : value == null ? '' : String(value);
 const fieldId = key => `field-${key.replace(/[^a-z0-9]/gi, '-')}`;
 
-export default function ProductDetailsDialog({ product, onClose, onSave, canonicalOptions = [], initialSection = 'Identità' }) {
+export default function ProductDetailsDialog({ product, onClose, onSave, onMediaChange, canonicalOptions = [], initialSection = 'Identità' }) {
   const dialogRef = useRef(null);
   const [section, setSection] = useState('Identità');
   const [draft, setDraft] = useState({});
@@ -142,6 +143,7 @@ export default function ProductDetailsDialog({ product, onClose, onSave, canonic
             {field.base && <small className="muted">Base: {field.base}</small>}
           </div>;
         })}</div>
+        {section === 'Media' && <ManualImageEditor key={product.id} product={product} onProductChange={onMediaChange} />}
         {section === 'Classificazione' && <div className="alert alert-info">Le associazioni supplier → categoria canonica restano in config/suppliers. Senza mapping verificato, Base.com riceverà il prodotto senza category_id.</div>}
         {section === 'Base.com' && <section className="base-preview-panel"><h3>Perché non posso inviarlo?</h3>
           <p><strong>{product.basePreflight?.status || 'Non verificato'}</strong> · {product.basePreflight?.counts?.BLOCKING ?? 0} blocchi · {product.basePreflight?.counts?.WARNING ?? 0} avvisi</p>

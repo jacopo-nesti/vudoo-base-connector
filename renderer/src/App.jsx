@@ -242,6 +242,12 @@ function App() {
         return response.product;
     }
 
+    function handleLocalMediaChanged(product) {
+        setCatalog(current => current && ({ ...current, products: current.products.map(item =>
+            item.id === product.id ? product : item) }));
+        invalidateSelectedResults(); setFullPreflightResult(null); setFullImportResult(null);
+    }
+
     async function handleBulkEditProducts(input) {
         const response = await window.electronAPI.bulkEditProducts(input);
         if (!response?.ok || !Array.isArray(response.products)) throw new Error(response?.error || 'Modifica massiva non riuscita.');
@@ -436,7 +442,7 @@ function App() {
     companyCode, setCompanyCode, activeCatalogCode, catalog, catalogLoading, catalogError, catalogBusy, handleFetchCatalog,
     manufacturerDirectoryWarning, pendingManufacturerCode, setPendingManufacturerCode, handleSaveManufacturer,
     handleSelectInventory, handleRetryInventory,
-    handleSaveProductOverride, handleSaveProductFields, handleBulkEditProducts,
+    handleSaveProductOverride, handleSaveProductFields, handleLocalMediaChanged, handleBulkEditProducts,
     selectedIds, previousSelectedIds, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter,
     categories, canonicalCategories,
     extraFilters, setExtraFilters, filteredProducts, selectedIdSet,

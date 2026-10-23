@@ -35,5 +35,6 @@ export function ImportSummary({ result, dryRunMode }) {
     {result.simulatedSkus?.length > 0 && <section className="card"><h2>Prodotti simulati</h2><ul className="sku-list">{result.simulatedSkus.map((sku, index) => <li key={`${sku}-${index}`}>{sku} <span className="tag tag-orange">SIMULATED</span></li>)}</ul></section>}
     {result.errorSkus?.length > 0 && <section className="card"><h2>Prodotti con errore</h2><ul className="sku-list">{result.errorSkus.map((sku, index) => <li key={`${sku}-${index}`}>{sku}</li>)}</ul></section>}
     {result.tagErrors?.length > 0 && <section className="card"><h2>Errori Product Tags</h2><ul className="sku-list">{result.tagErrors.map((item, index) => <li key={`${item.sku}-${item.code}-${index}`}><strong>{item.sku}</strong> · {item.code}{item.tagName ? ` · ${item.tagName}` : ''}: {item.message}</li>)}</ul></section>}
+    {result.imageErrors?.length > 0 && <section className="card"><h2>Errori immagini locali</h2><ul className="sku-list">{result.imageErrors.map((item, index) => <li key={`${item.sku}-${item.code}-${index}`}><strong>{item.sku}</strong>: {item.message}</li>)}</ul></section>}
   </div>;
 }

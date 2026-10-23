@@ -17,7 +17,7 @@ export function projectCatalogForOperator(catalog, mappings, overrides, companyC
       base_category_path: category.basePath ?? null };
     const overridesForProduct = typeof source.id === 'string' && source.id.trim()
       ? getProductOverride(overrides, companyCode, source.id) : {};
-    const manual = Object.fromEntries(Object.entries(overridesForProduct).filter(([key]) => key !== 'base'));
+    const manual = Object.fromEntries(Object.entries(overridesForProduct).filter(([key]) => key !== 'base' && key !== 'manual_images'));
     const base = overridesForProduct.base ?? {};
     const globalProduct = effectiveProduct(canonical, overridesForProduct);
     const baseProduct = effectiveProduct(canonical, overridesForProduct, 'base');

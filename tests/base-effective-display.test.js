@@ -11,6 +11,7 @@ import { projectCatalogForOperator } from '../electron/catalogProjection.js';
 import { effectiveProduct, productKey } from '../electron/effectiveProduct.js';
 import { saveBulkProductField, saveProductFieldPatch, loadProductOverrides } from '../electron/productOverrides.js';
 import { buildBasePayload } from '../src/products.js';
+import { basePayloadPreview } from '../src/marketplaces/base/localPreview.js';
 import { editorFieldScope, editorFieldValue } from '../renderer/src/components/productFieldValues.js';
 
 const values = { quantity: 11, price: 199, tax_rate: 22, weight: 1.2, height: 18, width: 12, length: 9 };
@@ -35,8 +36,9 @@ test('seven operational fields use the Base resolver in DTO, editor and payload,
     assert.equal(editorFieldScope('Commerciale', field), 'base');
   }
   assert.equal(current.provenance.quantity.source, '999');
-  assert.equal(current.provenance.quantity.canonical, 999);
+  assert.equal(current.provenance.quantity.canonical, 10);
   assert.equal(current.provenance.quantity.manual, undefined);
+  assert.equal(basePayloadPreview(normalizeVudooProduct(source)).unresolved.stock, 10);
   assert.equal(payload.stock.bl_1, current.quantity);
   assert.equal(payload.prices[2], current.price);
   for (const field of ['tax_rate', 'weight', 'height', 'width', 'length']) assert.equal(payload[field], current[field]);
@@ -50,8 +52,22 @@ test('operational display keeps Base above manual, then manual above Vudoo', () 
   assert.equal(withBase.provenance.quantity.manual, 7);
   assert.equal(withBase.provenance.quantity.globalValue, 7);
   assert.equal(withoutBase.quantity, 7);
-  assert.equal(row({}).quantity, 999);
+  assert.equal(row({}).quantity, 10);
   assert.deepEqual(source, original);
+});
+
+test('Base manual stock override remains above the automatic cap without changing Vudoo', () => {
+  const catalog50 = parseCatalog(catalogXml(itemXml.replace('<g:quantity>234</g:quantity>', '<g:quantity>50</g:quantity>')));
+  const supplier = catalog50.products[0];
+  const overrides = { [productKey('company', supplier.id)]: { base: { quantity: 25 } } };
+  const current = projectCatalogForOperator(catalog50, mappings, overrides, 'company').rows[0];
+  const effective = effectiveProduct(normalizeVudooProduct(supplier), overrides[productKey('company', supplier.id)], 'base');
+  assert.equal(current.provenance.quantity.source, '50');
+  assert.equal(current.provenance.quantity.canonical, 10);
+  assert.equal(current.quantity, 25);
+  assert.equal(buildBasePayload(effective, config).stock.bl_1, 25);
+  assert.equal(effectiveProduct(normalizeVudooProduct(supplier), { quantity: 25 }, 'base').quantity, 25);
+  assert.equal(supplier.quantity, '50');
 });
 
 test('bulk value is visible immediately, survives disk reload, single edit and reset', async () => {
@@ -70,8 +86,8 @@ test('bulk value is visible immediately, survives disk reload, single edit and r
     assert.equal(buildBasePayload({ ...source, quantity: row(overrides).quantity, price: row(overrides).price }, config).stock.bl_1, 15);
     overrides = await saveProductFieldPatch(file, overrides, 'company', source, { scope: 'base', reset: ['quantity'],
       expectedRevision: row(overrides).overrideRevision });
-    assert.equal(row(overrides).quantity, 999);
-    assert.equal(editorFieldValue(row(overrides), 'Commerciale', 'quantity'), 999);
+    assert.equal(row(overrides).quantity, 10);
+    assert.equal(editorFieldValue(row(overrides), 'Commerciale', 'quantity'), 10);
     assert.deepEqual(source, original);
   } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });

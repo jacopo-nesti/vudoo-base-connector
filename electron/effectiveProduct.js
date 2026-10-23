@@ -52,6 +52,7 @@ function derivedBaseFields(product, original) {
 
 export function effectiveProduct(product, fields = {}, marketplace = null) {
   let result = { ...product };
+  if (fields.manual_images?.length) result.manual_images = fields.manual_images.map(image => ({ ...image }));
   for (const [key, value] of Object.entries(fields)) {
     if (FIELD_BY_KEY.get(key)?.editable) result = setField(result, key, value);
   }

@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveProductFields: (input) => ipcRenderer.invoke('catalog:save-fields', input),
   bulkEditProducts: (input) => ipcRenderer.invoke('catalog:bulk-edit', input),
   basePayloadPreview: (id) => ipcRenderer.invoke('catalog:base-preview', id),
+  addManualImage: (id, file) => ipcRenderer.invoke('catalog:manual-image-add', { id, file }),
+  removeManualImage: (id, imageId) => ipcRenderer.invoke('catalog:manual-image-remove', { id, imageId }),
+  getManualImageThumbnail: (id, imageId) => ipcRenderer.invoke('catalog:manual-image-thumbnail', { id, imageId }),
+  getBaseImageStatus: (id) => ipcRenderer.invoke('catalog:base-image-status', id),
   preflightSelected: (selectedIds) =>
     ipcRenderer.invoke("catalog:preflight-selected", selectedIds),
   importSelected: (selectedIds) =>

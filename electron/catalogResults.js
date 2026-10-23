@@ -75,6 +75,7 @@ export function toImportResult(result) {
     errors: result.errors,
     errorSkus: result.errorSkus,
     tagErrors: result.tagErrors,
+    imageErrors: result.imageErrors,
     uncertainSkus: result.uncertainSkus,
     eanWarningsCount: result.eanWarningsCount,
     categorySummary: result.categorySummary,

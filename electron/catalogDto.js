@@ -36,6 +36,7 @@ export function toCatalogProductDto(product, { source = product.source ?? produc
     canonicalCategory: product?.canonical_category ?? null,
     imageLink: product.image_link ?? null,
     additionalImages: product.additional_image_link ?? [],
+    manualImages: product.manual_images ?? [],
     provenance,
     manualOverrides: { ...manual },
     baseOverrides: { ...base },

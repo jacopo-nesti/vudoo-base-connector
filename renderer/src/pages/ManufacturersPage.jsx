@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { filterManufacturers } from '../manufacturersView.js';
+import CatalogLoadProgress from '../components/CatalogLoadProgress.jsx';
 
 const dateFormat = new Intl.DateTimeFormat('it-IT', { dateStyle: 'short', timeStyle: 'short' });
 
@@ -9,12 +10,14 @@ function lastLoadedAt(value) {
   return Number.isNaN(date.getTime()) ? 'Data non disponibile' : dateFormat.format(date);
 }
 
-export default function ManufacturersPage({ onNavigate }) {
+export default function ManufacturersPage({ onNavigate, onLoadCatalog, catalogBusy, catalogError }) {
   const [manufacturers, setManufacturers] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [loadingCatalogCode, setLoadingCatalogCode] = useState(null);
+  const [loadStatus, setLoadStatus] = useState('idle');
   useEffect(() => {
     let active = true;
     window.electronAPI.getManufacturers().then(response => {
@@ -28,6 +31,19 @@ export default function ManufacturersPage({ onNavigate }) {
   }, [retry]);
   const visible = useMemo(() => filterManufacturers(manufacturers, query), [manufacturers, query]);
   const refresh = () => { setLoading(true); setError(''); setRetry(value => value + 1); };
+  async function loadCatalog(item) {
+    setLoadingCatalogCode(item.catalogCode);
+    setLoadStatus('loading');
+    try {
+      if (await onLoadCatalog(item.catalogCode)) {
+        setLoadStatus('success');
+        await new Promise(resolve => setTimeout(resolve, 450));
+        onNavigate('base-catalog');
+      } else setLoadStatus('idle');
+    } catch {
+      setLoadStatus('idle');
+    }
+  }
 
   return <div className="page-stack manufacturers-page">
     <div className="page-heading"><div><h1>Produttori</h1><p>Anagrafica locale dei cataloghi Vudoo e ultimo caricamento.</p></div></div>
@@ -40,6 +56,9 @@ export default function ManufacturersPage({ onNavigate }) {
     {!loading && !error && manufacturers.length > 0 && visible.length === 0 && <section className="card empty-state"><h2>Nessun produttore corrisponde alla ricerca.</h2><button className="btn btn-secondary" type="button" onClick={() => setQuery('')}>Cancella ricerca</button></section>}
     {!loading && !error && visible.length > 0 && <div className="manufacturers-grid">{visible.map(item => <article className="card manufacturer-card" key={item.id}>
       <div className="manufacturer-card-header"><h2>{item.name}</h2><span className={`tag ${item.baseInventoryId == null ? 'tag-gray' : 'tag-green'}`}>{item.baseInventoryId == null ? 'Inventory non associato' : 'Inventory associato'}</span></div>
+      <button className="btn btn-primary btn-sm manufacturer-load-button" type="button" disabled={catalogBusy || loadStatus !== 'idle'} onClick={() => loadCatalog(item)}>Carica catalogo</button>
+      {loadingCatalogCode === item.catalogCode && <CatalogLoadProgress status={loadStatus} name={item.name} />}
+      {loadingCatalogCode === item.catalogCode && loadStatus === 'idle' && catalogError && <p className="alert alert-danger" role="alert">{catalogError}</p>}
       <dl className="detail-list"><div><dt>Catalogo Vudoo</dt><dd className="mono">{item.catalogCode}</dd></div>
         <div><dt>Inventory Base.com</dt><dd>{item.baseInventoryId == null ? 'Non associato' : `ID ${item.baseInventoryId}`}</dd></div>
         <div><dt>Ultimo catalogo</dt><dd>{item.lastProductCount == null ? 'Non disponibile' : `${item.lastProductCount} prodotti`}</dd></div>

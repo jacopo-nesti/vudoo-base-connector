@@ -34,6 +34,13 @@ export async function loadProductOverrides(filePath) {
         !fields || typeof fields !== 'object' || Array.isArray(fields) ||
         Object.keys(fields).length === 0 ||
         Object.entries(fields).some(([field, value]) => {
+          if (field === 'manual_images') return !Array.isArray(value) || !value.length || value.length > 16 ||
+            !value.every(image => image && typeof image === 'object' && !Array.isArray(image) &&
+              /^[0-9a-f-]{36}$/i.test(image.id) && typeof image.name === 'string' &&
+              typeof image.mimeType === 'string' && Number.isSafeInteger(image.size) &&
+              image.size > 0 && image.size <= 4_000_000 &&
+              (image.base == null || (Number.isSafeInteger(image.base.productId) && image.base.productId > 0 &&
+                Number.isInteger(image.base.position) && image.base.position >= 1 && image.base.position <= 16)));
           if (field === 'base') return !value || typeof value !== 'object' || Array.isArray(value) ||
             !Object.entries(value).every(([name, item]) => validStored(name, item, 'base'));
           return !validStored(field, value, 'manual');
@@ -51,7 +58,7 @@ function validStored(field, value, scope) {
   catch { return false; }
 }
 
-async function writeOverrides(filePath, products) {
+export async function writeProductOverrides(filePath, products) {
   await mkdir(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
   try {
@@ -93,7 +100,7 @@ export async function saveProductFieldPatch(filePath, overrides, companyCode, so
   const next = { ...overrides };
   if (Object.keys(fields).length) next[key] = fields;
   else delete next[key];
-  await writeOverrides(filePath, next);
+  await writeProductOverrides(filePath, next);
   return next;
 }
 
@@ -114,7 +121,7 @@ export async function saveBulkProductField(filePath, overrides, companyCode, sou
     else fields[field] = normalized;
     next[key] = fields;
   }
-  await writeOverrides(filePath, next);
+  await writeProductOverrides(filePath, next);
   return next;
 }
 
@@ -146,7 +153,7 @@ export async function saveBulkProductTags(filePath, overrides, companyCode, sour
     next[key] = { ...fields, base };
     changedCount++;
   }
-  if (changedCount) await writeOverrides(filePath, next);
+  if (changedCount) await writeProductOverrides(filePath, next);
   return { overrides: next, changedCount };
 }
 
@@ -167,7 +174,7 @@ export async function saveProductOverride(filePath, overrides, companyCode, sour
   if (Object.keys(fields).length) next[key] = fields;
   else delete next[key];
 
-  await writeOverrides(filePath, next);
+  await writeProductOverrides(filePath, next);
   return next;
 }
 

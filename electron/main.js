@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadLocalEnvironment, resolveEnvironmentFile } from './localEnv.js';
@@ -9,7 +9,8 @@ import {
 } from "./settingsManager.js";
 import { createWriteGuard } from "./writeGuard.js";
 import {
-  PRODUCT_OVERRIDES_FILE_NAME, loadProductOverrides, saveProductOverride, saveProductFieldPatch, saveBulkProductField, saveBulkProductTags,
+  PRODUCT_OVERRIDES_FILE_NAME, loadProductOverrides, writeProductOverrides,
+  saveProductOverride, saveProductFieldPatch, saveBulkProductField, saveBulkProductTags,
 } from './productOverrides.js';
 import { getProductOverride } from './effectiveProduct.js';
 import { basePayloadPreview, assertBaseLocalSendable } from '../src/marketplaces/base/localPreview.js';
@@ -17,6 +18,8 @@ import { validateBulkBaseInput } from '../src/productSchema.js';
 import { MANUFACTURERS_DB_FILE_NAME, openManufacturerDirectory, registerLoadedCatalog } from './manufacturerDirectory.js';
 import { ORDERS_DB_FILE_NAME, openOrderStore } from './orderStore.js';
 import { createManufacturerInventoryService } from './manufacturerInventory.js';
+import { saveLocalProductImage, removeLocalProductImage, readLocalImage, imageForBase,
+  optimizeWithNativeImage, markLocalImagesUploaded, pendingLocalImages } from './manualProductImages.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,7 +75,7 @@ async function bootstrap() {
 
   const { BULK_LOOKUP_THRESHOLD } = await import("../src/importer.js");
   const { BASE_PRODUCT_DETAILS_CHUNK_SIZE } = await import("../src/baseApi.js");
-  const { callBase } = await import('../src/baseApi.js');
+  const { callBase, findProductInBase, getBaseProductDetails } = await import('../src/baseApi.js');
   const { readBaseOrder, classifyOrderError } = await import('../src/orders/baseOrderReader.js');
   const { syncOrders } = await import('../src/orders/orderSync.js');
   const { createInventoryTagService } = await import('../src/inventoryTags.js');
@@ -100,6 +103,7 @@ async function bootstrap() {
   let activeMappings = null;
   let activeInventoryStatus = null;
   const productOverridesPath = path.join(app.getPath('userData'), PRODUCT_OVERRIDES_FILE_NAME);
+  const manualImagesRoot = path.join(app.getPath('userData'), 'manual-product-images');
   const manufacturersPath = path.join(app.getPath('userData'), MANUFACTURERS_DB_FILE_NAME);
   const ordersPath = path.join(app.getPath('userData'), ORDERS_DB_FILE_NAME);
   let orderStore = null;
@@ -397,6 +401,82 @@ async function bootstrap() {
         activeMappings, activeOverrides, activeCompanyCode).rows[0] };
     }
 
+    function manualImageError(error) {
+      const safeCodes = new Set(['INVALID_IMAGE', 'IMAGE_TOO_LARGE', 'IMAGE_LIMIT', 'IMAGE_NOT_FOUND']);
+      return { ok: false, error: safeCodes.has(error?.code) ? error.message
+        : 'Impossibile salvare l’immagine locale. Verifica lo spazio disponibile e riprova.' };
+    }
+
+    ipcMain.handle('catalog:manual-image-add', async (_event, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          if (!input || typeof input.id !== 'string') throw new Error('Prodotto non valido.');
+          oneProductResponse(input.id);
+          activeOverrides = await saveLocalProductImage({ root: manualImagesRoot,
+            filePath: productOverridesPath, overrides: activeOverrides, companyCode: activeCompanyCode,
+            productId: input.id, file: input.file, writeOverrides: writeProductOverrides });
+          return { ok: true, product: oneProductResponse(input.id).product };
+        });
+      } catch (error) { return manualImageError(error); }
+    });
+
+    ipcMain.handle('catalog:manual-image-remove', async (_event, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          if (!input || typeof input.id !== 'string') throw new Error('Prodotto non valido.');
+          oneProductResponse(input.id);
+          activeOverrides = await removeLocalProductImage({ root: manualImagesRoot,
+            filePath: productOverridesPath, overrides: activeOverrides, companyCode: activeCompanyCode,
+            productId: input.id, imageId: input.imageId, writeOverrides: writeProductOverrides });
+          return { ok: true, product: oneProductResponse(input.id).product };
+        });
+      } catch (error) { return manualImageError(error); }
+    });
+
+    ipcMain.handle('catalog:manual-image-thumbnail', async (_event, input) => {
+      try {
+        if (!input || typeof input.id !== 'string') throw new Error('Prodotto non valido.');
+        const { product } = oneProductResponse(input.id);
+        const metadata = product.manualImages.find(image => image.id === input.imageId);
+        if (!metadata) throw new Error('Immagine non associata al prodotto.');
+        const bytes = await readLocalImage(manualImagesRoot, metadata);
+        const image = nativeImage.createFromBuffer(bytes);
+        if (image.isEmpty()) throw new Error('Immagine non leggibile.');
+        return { ok: true, preview: image.resize({ width: 160 }).toDataURL() };
+      } catch { return { ok: false, error: 'Anteprima locale non disponibile.' }; }
+    });
+
+    ipcMain.handle('catalog:base-image-status', async (_event, id) => {
+      try {
+        const { product } = oneProductResponse(id);
+        if (!activeInventoryStatus?.inventoryId) return { ok: true, available: false, images: [] };
+        const match = await findProductInBase(product.sku, activeInventoryStatus.inventoryId);
+        if (!match) return { ok: true, available: false, images: [] };
+        const details = await getBaseProductDetails(activeInventoryStatus.inventoryId, match.product_id);
+        if (details.sku !== product.sku) throw new Error('SKU Base diverso.');
+        const images = Object.entries(details.images ?? {}).filter(([position, url]) =>
+          /^([1-9]|1[0-6])$/.test(position) && typeof url === 'string' && url)
+          .map(([position, url]) => ({ position: Number(position), url }));
+        return { ok: true, available: true, images };
+      } catch { return { ok: false, error: 'Immagini Base.com non disponibili. La modifica locale resta possibile.' }; }
+    });
+
+    function importMediaHooks() {
+      return {
+        resolveManualImages: async (product, existing, baseProductId) => {
+          const pending = pendingLocalImages(product.manual_images, existing, baseProductId);
+          return Promise.all(pending.map(async image => ({ id: image.id,
+            data: await imageForBase(manualImagesRoot, image,
+              (bytes, mimeType) => optimizeWithNativeImage(nativeImage, bytes, mimeType)) })));
+        },
+        onManualImagesUploaded: async (product, baseProductId, assignments) => {
+          activeOverrides = await markLocalImagesUploaded({ filePath: productOverridesPath,
+            overrides: activeOverrides, companyCode: activeCompanyCode, productId: product.id,
+            baseProductId, assignments, writeOverrides: writeProductOverrides });
+        },
+      };
+    }
+
     ipcMain.handle('catalog:save-fields', async (_event, input) => {
       try {
         return await writeGuard.run(async () => {
@@ -499,7 +579,7 @@ async function bootstrap() {
       const response = await runWriteOperation(() => {
         const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode);
         assertBaseLocalSendable(projection.rows, selectedIds);
-        return importSelectedCatalog(activeCatalog, selectedIds, activeOverrides, activeCompanyCode);
+        return importSelectedCatalog(activeCatalog, selectedIds, activeOverrides, activeCompanyCode, importMediaHooks());
       });
       return { ...response, inventoryStatus: activeInventoryStatus };
     });
@@ -516,7 +596,7 @@ async function bootstrap() {
 
     ipcMain.handle("catalog:import-all", async () => {
       await refreshActiveInventory();
-      const response = await runWriteOperation(() => importFullCatalog(activeCatalog, activeOverrides, activeCompanyCode));
+      const response = await runWriteOperation(() => importFullCatalog(activeCatalog, activeOverrides, activeCompanyCode, importMediaHooks()));
       return { ...response, inventoryStatus: activeInventoryStatus };
     });
 

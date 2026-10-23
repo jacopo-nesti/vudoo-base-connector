@@ -117,6 +117,8 @@ export async function preflightPreparedVudooCatalog(catalog) {
   preflight.categoryAnalysis = categories;
   preflight.selection = catalog.selection;
   preflight.eanWarningsCount = catalog.eanWarnings.length;
+  preflight.resolveManualImages = catalog.resolveManualImages;
+  preflight.onManualImagesUploaded = catalog.onManualImagesUploaded;
   if (preflight.selectedProducts.length > 0) {
     preflight.extraFields = await getVudooBaseFields(preflight.selectedProducts);
     for (const product of preflight.selectedProducts) buildBasePayload(product, preflight);

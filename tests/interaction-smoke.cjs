@@ -41,11 +41,7 @@ async function run() {
   try {
     await waitFor('.topbar-search input');
     assert.equal(await js(`document.querySelector('.dashboard-hero h1')?.textContent`), 'Cerca il tuo catalogo');
-    assert.equal(await js(`document.querySelector('.dashboard-guide').open`), false);
-    await click('.dashboard-guide summary');
-    assert.equal(await js(`document.querySelector('.dashboard-guide').open`), true);
-    await click('.dashboard-guide summary');
-    assert.equal(await js(`document.querySelector('.dashboard-guide').open`), false);
+    assert.equal(await js(`document.querySelector('.dashboard-guide, .dashboard-system')`), null);
     await waitFor('.dashboard-recent-item');
     assert.equal(await js(`document.querySelectorAll('.dashboard-recent-item').length`), 1);
     await click('.sidebar-nav > div:nth-child(2) .sidebar-item');

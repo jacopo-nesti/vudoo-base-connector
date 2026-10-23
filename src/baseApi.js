@@ -312,7 +312,7 @@ export async function updateProductInBase(productId, product, config, existing) 
   if (!changes) return null;
   const payload = { ...changes, product_id: Number(productId) };
   if (dryRun === 'true') {
-    log(`Payload Base.com (UPDATE):\n${JSON.stringify(payload, null, 2)}`);
+    log(`Payload Base.com (UPDATE):\n${JSON.stringify(safePayloadForLog(payload), null, 2)}`);
     log('DRY_RUN: nessuna scrittura su Base.com');
     return null;
   }
@@ -322,11 +322,17 @@ export async function updateProductInBase(productId, product, config, existing) 
 export async function sendProductToBase(product, config) {
   const payload = buildBasePayload(product, config);
   if (dryRun === 'true') {
-    log(`Payload Base.com (addInventoryProduct):\n${JSON.stringify(payload, null, 2)}`);
+    log(`Payload Base.com (addInventoryProduct):\n${JSON.stringify(safePayloadForLog(payload), null, 2)}`);
     log('DRY_RUN: nessuna scrittura su Base.com');
     return null;
   }
   return await writeProductAndVerify(payload, product.sku);
+}
+
+function safePayloadForLog(payload) {
+  if (!payload.images) return payload;
+  return { ...payload, images: Object.fromEntries(Object.entries(payload.images).map(([key, value]) =>
+    [key, typeof value === 'string' && value.startsWith('data:') ? '[immagine locale codificata]' : value])) };
 }
 
 function writtenValuesMatch(payload, details, sku) {
@@ -345,7 +351,9 @@ function writtenValuesMatch(payload, details, sku) {
     } else if (field === 'images') {
       for (const [position, desired] of Object.entries(value)) {
         const current = details.images?.[Number(position) + 1];
-        if (typeof current !== 'string' || current.replace(/^url:/, '') !== desired.replace(/^url:/, '')) return false;
+        // A CDN URL cannot prove which binary was accepted after an uncertain write.
+        if (desired.startsWith('data:') || typeof current !== 'string' ||
+            current.replace(/^url:/, '') !== desired.replace(/^url:/, '')) return false;
       }
     } else if (field === 'tags') {
       if (JSON.stringify(details.tags ?? []) !== JSON.stringify(value)) return false;
@@ -371,6 +379,10 @@ async function writeProductAndVerify(payload, sku) {
     const result = await callBase('addInventoryProduct', payload);
     if (payload.text_fields?.features && Object.keys(result.warnings?.parameters ?? {}).length) {
       throw apiError('addInventoryProduct: Parameters non confermati da Base.com', false, true);
+    }
+    if (Object.values(payload.images ?? {}).some(value => typeof value === 'string' && value.startsWith('data:')) &&
+        Object.keys(result.warnings ?? {}).length) {
+      throw apiError('addInventoryProduct: immagine locale non confermata da Base.com', false, true);
     }
     const id = Number(result.product_id);
     if (!Number.isSafeInteger(id) || id <= 0 || (payload.product_id != null && id !== payload.product_id)) {
