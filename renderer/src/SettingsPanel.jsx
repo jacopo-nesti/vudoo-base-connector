@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { notifyOperation } from './operationNotifications.js';
 import { rateLimitGuidance } from './rateLimitGuidance.js';
 import { parseNumericSettings } from './settingsValidation.js';
+import CategoryMappingsSettings from './components/CategoryMappingsSettings.jsx';
 import {
-  columnDefinitions, defaultColumns, markStartupViewHandled, readLayoutPreferences, readTableState,
+  allowStartupViewOnNextEntry, clampColumnWidth, defaultColumnOrder, defaultColumnWidths, defaultColumns, markStartupViewHandled,
+  pinnedColumnOffsets, productColumns, readLayoutPreferences, readTableState, visibleColumnOrder,
   writeLayoutPreferences, writeTableState,
 } from './uiPreferences.js';
 
@@ -65,45 +67,111 @@ function ToggleSetting({ id, title, description, checked, onChange, disabled }) 
   </label>;
 }
 
-function ColumnsSettings({ state, onChange, filters, storageError }) {
+function ColumnWidthInput({ columnKey, column, width, onCommit }) {
+  const [draft, setDraft] = useState(String(width));
+  useEffect(() => { setDraft(String(width)); }, [width]);
+  function commit() {
+    if (!draft.trim() || !Number.isFinite(Number(draft))) { setDraft(String(width)); return; }
+    const clamped = clampColumnWidth(columnKey, draft);
+    setDraft(String(clamped));
+    onCommit(columnKey, clamped);
+  }
+  return <label><span className="sr-only">Larghezza in pixel {column.label}</span><input className="input mono" type="number" min={column.min} max={column.max} value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} /></label>;
+}
+
+function ColumnsSettings({ state, onChange, filters, storageError, pageSize, onResetPageSize }) {
   const [name, setName] = useState('');
   const [selected, setSelected] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [viewError, setViewError] = useState('');
+  const previewRef = useRef(null);
+  const [previewWidth, setPreviewWidth] = useState(0);
   const current = state.views.find(view => view.id === selected);
+  const ordered = state.order || defaultColumnOrder();
+  const visible = visibleColumnOrder(state);
+  const previewPinnedOffsets = pinnedColumnOffsets(state, 42, previewWidth ? Math.floor(previewWidth * 0.62) : 520);
+  const previewPinLimited = state.pinned.some(key => visible.includes(key) && previewPinnedOffsets[key] === undefined);
+  const sortable = [['source', 'Ordine catalogo'], ...Object.values(productColumns).filter(column => column.sort).map(column => [column.sort, column.label])];
+  useEffect(() => {
+    const element = previewRef.current;
+    if (!element) return;
+    const measure = () => setPreviewWidth(element.clientWidth);
+    measure();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    observer?.observe(element);
+    window.addEventListener('resize', measure);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+  }, []);
   function change(updater, message) {
     const saved = onChange(previous => typeof updater === 'function' ? updater(previous) : updater);
     setFeedback(saved ? message : '');
     return saved;
   }
+  function move(key, shift) {
+    const next = [...ordered]; const index = next.indexOf(key); const target = index + shift;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    change(previous => ({ ...previous, order: next }), 'Ordine colonne salvato.');
+  }
+  function updateWidth(key, value) {
+    change(previous => ({ ...previous, widths: { ...previous.widths, [key]: clampColumnWidth(key, value) } }), 'Larghezza salvata.');
+  }
   function saveView() {
     const trimmed = name.trim();
-    if (!trimmed || state.views.length >= 30) return;
+    if (!trimmed) { setViewError('Inserisci un nome per la vista.'); return; }
+    if (state.views.some(view => view.name.toLocaleLowerCase('it') === trimmed.toLocaleLowerCase('it'))) { setViewError('Esiste già una vista con questo nome.'); return; }
+    if (state.views.length >= 30) { setViewError('Puoi salvare al massimo 30 viste.'); return; }
+    setViewError('');
     const id = globalThis.crypto?.randomUUID?.() || `view-${Date.now()}`;
-    if (change(previous => ({ ...previous, views: [...previous.views, { id, name: trimmed, channel: 'base', filters, columns: previous.columns, density: previous.density, sort: previous.sort }] }), 'Vista salvata localmente.')) setSelected(id);
+    if (change(previous => ({ ...previous, views: [...previous.views, {
+      id, name: trimmed, channel: 'base', filters, columns: previous.columns,
+      order: previous.order, widths: previous.widths, pinned: previous.pinned,
+      density: previous.density, sort: previous.sort, pageSize,
+    }] }), 'Vista salvata localmente.')) setSelected(id);
   }
   return <div className="settings-sections">
-    <section className="card settings-section"><h2>Colonne visibili</h2><p>Prodotto, selezione e azioni restano sempre disponibili.</p>
-      <div className="settings-column-list">{Object.entries(columnDefinitions.base).map(([key, label]) =>
-        <label key={key}><input type="checkbox" checked={state.columns[key]} onChange={event => change(previous => ({ ...previous, columns: { ...previous.columns, [key]: event.target.checked } }), 'Colonne salvate localmente.')} /> {label}</label>)}</div>
-      <button className="btn btn-secondary btn-sm" type="button" onClick={() => change(previous => ({ ...previous, columns: defaultColumns('base') }), 'Colonne predefinite ripristinate.')}>Ripristina colonne</button>
+    <section className="card settings-section"><div className="settings-section-heading"><div><h2>Colonne prodotti</h2><p>Selezione e Prodotto restano visibili: la seconda contiene le azioni e l’Inspector. Le modifiche si salvano subito su questo dispositivo.</p></div></div>
+      <div className="settings-column-grid">{ordered.map((key, index) => {
+        const column = productColumns[key]; if (!column) return null;
+        return <div className="settings-column-row" key={key}>
+          <label className="settings-column-name"><input type="checkbox" checked={Boolean(state.columns[key])} disabled={key === 'title'} onChange={event => change(previous => ({ ...previous, columns: { ...previous.columns, [key]: event.target.checked }, pinned: event.target.checked ? previous.pinned : previous.pinned.filter(value => value !== key) }), 'Visibilità salvata.')} /> {column.label}{key === 'title' && <small> · azioni</small>}</label>
+          <div className="settings-column-order" aria-label={`Ordine ${column.label}`}><button type="button" className="btn btn-quiet btn-sm" disabled={index === 0} aria-label={`Sposta ${column.label} su`} onClick={() => move(key, -1)}>↑</button><button type="button" className="btn btn-quiet btn-sm" disabled={index === ordered.length - 1} aria-label={`Sposta ${column.label} giù`} onClick={() => move(key, 1)}>↓</button></div>
+          <label><input type="checkbox" checked={state.pinned?.includes(key) || false} disabled={!state.columns[key]} onChange={event => change(previous => ({ ...previous, pinned: event.target.checked ? [...previous.pinned, key] : previous.pinned.filter(value => value !== key) }), 'Colonne fissate salvate.')} /> Fissa</label>
+          <label className="settings-column-width"><span className="sr-only">Larghezza {column.label}</span><input type="range" min={column.min} max={column.max} step="1" value={state.widths[key]} onChange={event => updateWidth(key, event.target.value)} aria-label={`Larghezza ${column.label}`} /><small>{column.min}–{column.max} px</small></label>
+          <ColumnWidthInput columnKey={key} column={column} width={state.widths[key]} onCommit={updateWidth} />
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => updateWidth(key, column.defaultWidth)} aria-label={`Larghezza predefinita ${column.label}`}>Default</button>
+        </div>;
+      })}</div>
+      <p className="settings-hint">Le colonne fissate rimangono a sinistra durante lo scorrimento orizzontale. Se manca spazio, quelle in eccesso scorrono normalmente.</p>
+      {previewPinLimited && <p className="alert alert-warning" role="status">Con questa larghezza, alcune colonne selezionate non possono rimanere fisse. Riduci le larghezze o usa una finestra più ampia.</p>}
     </section>
-    <section className="card settings-section"><h2>Viste salvate</h2><p>Conservano filtri, ricerca, colonne, densità e ordinamento disponibili al momento del salvataggio.</p>
+    <section className="card settings-section"><h2>Ordine e anteprima</h2>
+      <div className="settings-view-controls"><label className="form-field"><span>Ordina per</span><select className="select" value={state.sort.split(':')[0]} onChange={event => change(previous => ({ ...previous, sort: event.target.value + (previous.sort.endsWith(':desc') && event.target.value !== 'source' ? ':desc' : '') }), 'Ordinamento salvato.')} >{sortable.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+        <label className="form-field"><span>Direzione</span><select className="select" value={state.sort.endsWith(':desc') ? 'desc' : 'asc'} disabled={state.sort === 'source'} onChange={event => change(previous => ({ ...previous, sort: previous.sort.split(':')[0] + (event.target.value === 'desc' ? ':desc' : '') }), 'Direzione salvata.')}><option value="asc">Crescente</option><option value="desc">Decrescente</option></select></label>
+        <label className="form-field"><span>Densità</span><select className="select" value={state.density} onChange={event => change(previous => ({ ...previous, density: event.target.value }), 'Densità salvata.')}><option value="comfortable">Comoda</option><option value="compact">Compatta</option></select></label>
+        <div className="form-field"><span>Righe per pagina</span><strong>{pageSize}</strong><small>Modifica in Layout. Le nuove viste conservano questo valore.</small></div></div>
+      <p className="settings-hint">Anteprima con dati dimostrativi.</p>
+      <div className="settings-table-preview" ref={previewRef} data-density={state.density} aria-label="Anteprima configurazione tabella"><table style={{ width: 42 + visible.reduce((sum, key) => sum + state.widths[key], 0) }}><colgroup><col style={{ width: 42 }} />{visible.map(key => <col key={key} style={{ width: state.widths[key] }} />)}</colgroup><thead><tr><th>✓</th>{visible.map(key => <th key={key} data-pinned={previewPinnedOffsets[key] !== undefined} style={previewPinnedOffsets[key] === undefined ? undefined : { left: previewPinnedOffsets[key] }} title={productColumns[key].label}>{productColumns[key].label}</th>)}</tr></thead><tbody><tr><td>□</td>{visible.map(key => <td key={key} data-pinned={previewPinnedOffsets[key] !== undefined} style={previewPinnedOffsets[key] === undefined ? undefined : { left: previewPinnedOffsets[key] }} title={{sku:'534078',title:'Agenda settimanale',ean:'8050000000000',brand:'Marca',category:'Cancelleria',mpn:'Riferimento',price:'€ 12,00',stock:'10'}[key]}>{{sku:'534078',title:'Agenda settimanale',ean:'8050000000000',brand:'Marca',category:'Cancelleria',mpn:'Riferimento',price:'€ 12,00',stock:'10'}[key]}</td>)}</tr></tbody></table></div>
+      <button className="btn btn-secondary btn-sm" type="button" onClick={() => { if (change(previous => ({ ...previous, columns: defaultColumns('base'), order: defaultColumnOrder(), widths: defaultColumnWidths(), pinned: [], sort: 'source', density: 'comfortable', startup: '' }), '')) { if (onResetPageSize()) { setViewError(''); setFeedback('Configurazione tabella ripristinata; le viste personali sono state conservate.'); } else { setFeedback(''); setViewError('Colonne ripristinate, ma righe per pagina non salvate. Riprova.'); } } }}>Ripristina configurazione tabella</button>
+    </section>
+    <section className="card settings-section"><h2>Viste salvate</h2><p>Conservano filtri, ricerca, colonne, ordine, larghezze, colonne fissate, densità, ordinamento e righe per pagina.</p>
       <div className="settings-view-controls"><label className="form-field"><span>Vista da gestire</span><select className="select" value={selected} onChange={event => { setSelected(event.target.value); setName(state.views.find(view => view.id === event.target.value)?.name || ''); }}><option value="">Seleziona una vista</option>{state.views.map(view => <option key={view.id} value={view.id}>{view.name}</option>)}</select></label>
-        <label className="form-field"><span>Nome vista</span><input className="input" value={name} maxLength={60} onChange={event => setName(event.target.value)} placeholder="Es. Base - da completare" /></label>
+        <label className="form-field"><span>Nome vista</span><input className="input" value={name} maxLength={60} onChange={event => { setName(event.target.value); setViewError(''); }} placeholder="Es. Base - da completare" /></label>
         <button className="btn btn-primary btn-sm" type="button" onClick={saveView} disabled={!name.trim() || state.views.length >= 30}>Salva nuova vista</button></div>
       {current && <div className="settings-view-actions">
-        <button className="btn btn-secondary btn-sm" type="button" disabled={!name.trim()} onClick={() => change(previous => ({ ...previous, views: previous.views.map(view => view.id === selected ? { ...view, name: name.trim() } : view) }), 'Vista rinominata.')}>Rinomina</button>
+        <button className="btn btn-secondary btn-sm" type="button" disabled={!name.trim()} onClick={() => { const trimmed = name.trim(); if (state.views.some(view => view.id !== selected && view.name.toLocaleLowerCase('it') === trimmed.toLocaleLowerCase('it'))) { setViewError('Esiste già una vista con questo nome.'); return; } change(previous => ({ ...previous, views: previous.views.map(view => view.id === selected ? { ...view, name: trimmed } : view) }), 'Vista rinominata.'); }}>Rinomina</button>
         <button className="btn btn-secondary btn-sm" type="button" onClick={() => { if (change(previous => ({ ...previous, views: previous.views.filter(view => view.id !== selected), startup: previous.startup === selected ? '' : previous.startup }), 'Vista eliminata.')) setSelected(''); }}>Elimina</button>
-        <label><input type="checkbox" checked={state.startup === selected} onChange={event => change(previous => ({ ...previous, startup: event.target.checked ? selected : '' }), 'Vista iniziale salvata.')} /> Vista iniziale</label>
+        <label><input type="checkbox" checked={state.startup === selected} onChange={event => { if (change(previous => ({ ...previous, startup: event.target.checked ? selected : '' }), 'Vista iniziale salvata.')) allowStartupViewOnNextEntry('base'); }} /> Vista iniziale</label>
       </div>}
       {state.startup && <p>Vista all’avvio: <strong>{state.views.find(view => view.id === state.startup)?.name || 'Nessuna'}</strong></p>}
     </section>
+    {viewError && <p className="alert alert-danger" role="alert">{viewError}</p>}
     {storageError && <p className="alert alert-danger" role="alert">Non è stato possibile salvare le preferenze locali.</p>}
     {feedback && <p className="alert alert-success" role="status">{feedback}</p>}
   </div>;
 }
 
-export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, onModeChanged, onDiagnostics, filters = {} }) {
+export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, onModeChanged, onDiagnostics, onCategoryMappingsChanged, filters = {} }) {
   const [tab, setTab] = useState(initialTab || (scope === 'base' ? 'base' : 'technical'));
   const [snapshot, setSnapshot] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -136,7 +204,8 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
   function update(key, value) { setDraft(current => ({ ...current, [key]: value })); setError(''); setMessage(''); }
   function updateLayout(patch) {
     const next = { ...layout, ...patch };
-    if (writeLayoutPreferences(next)) { setLayout(next); if (patch.pageSize !== undefined) setPageSizeInput(String(next.pageSize)); setStorageError(false); } else setStorageError(true);
+    if (writeLayoutPreferences(next)) { setLayout(next); if (patch.pageSize !== undefined) setPageSizeInput(String(next.pageSize)); setStorageError(false); return true; }
+    setStorageError(true); return false;
   }
   function commitPageSize() {
     const value = Number(pageSizeInput);
@@ -190,7 +259,7 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
         <div className="settings-control"><div className="settings-control-heading"><label htmlFor="page-size">Righe per pagina</label><strong>{layout.pageSize}</strong></div><div className="settings-number-control"><span className="settings-range-label">10</span><input type="range" aria-label="Righe per pagina: cursore" min="10" max="200" step="10" value={layout.pageSize} onChange={event => updateLayout({ pageSize: Number(event.target.value) })} /><span className="settings-range-label">200</span><input className="input mono" id="page-size" type="number" min="10" max="200" step="1" value={pageSizeInput} onChange={event => setPageSizeInput(event.target.value)} onBlur={commitPageSize} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitPageSize(); } }} /></div></div>
       </section>{storageError && <p role="alert" className="alert alert-danger">Non è stato possibile salvare le preferenze locali.</p>}
     </div>}
-    {tab === 'columns' && <ColumnsSettings state={table} onChange={updateTable} filters={filters} storageError={storageError} />}
+    {tab === 'columns' && <ColumnsSettings state={table} onChange={updateTable} filters={filters} storageError={storageError} pageSize={layout.pageSize} onResetPageSize={() => updateLayout({ pageSize: 50 })} />}
     {['technical', 'catalog', 'base'].includes(tab) && <form className="settings-sections" onSubmit={save}>
       <section className="card settings-section"><div className="settings-section-heading"><div><h2>{tabs.find(([id]) => id === tab)?.[1]}</h2><p>{tab === 'technical' ? 'Configurazione del caricamento Vudoo.' : tab === 'catalog' ? 'Preparazione e limiti dell’importazione.' : 'Parametri operativi Base.com; la verifica della connessione resta in Diagnostica.'}</p></div>{tab === 'base' && <button className="btn btn-secondary btn-sm" type="button" onClick={onDiagnostics}>Apri Diagnostica</button>}</div>
         {tab === 'catalog' && <ToggleSetting id="setting-testMode" title="Limite di prova" description="Elabora un solo prodotto; non modifica la modalità Simulazione/Reale." checked={draft.testMode} onChange={value => update('testMode', value)} disabled={busy} />}
@@ -199,6 +268,7 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
           {snapshot.activeSettings.dryRun !== draft.dryRun && <small>Modalità attiva: {snapshot.activeSettings.dryRun ? 'Simulazione' : 'Reale'}; il valore selezionato sarà applicato dopo il salvataggio.</small>}</>}
         {fields.filter(field => field.section === tab).map(field => <NumericSetting key={field.key} field={field} value={draft[field.key]} onChange={update} disabled={busy} />)}
       </section>
+      {tab === 'catalog' && <CategoryMappingsSettings onProductsChanged={onCategoryMappingsChanged} />}
       {dirty && <p className="alert alert-warning settings-unsaved" role="status">Modifiche non salvate.</p>}
       {message && <p className="alert alert-success" role="status">{message}</p>}
       {error && <p className="alert alert-danger" role="alert">{error}</p>}

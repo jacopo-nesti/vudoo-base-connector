@@ -25,7 +25,7 @@ export function filterOptions(products, field) {
 }
 
 export function filterCatalogProducts(products, { searchQuery = '', categoryFilter = '',
-  canonicalFilter = '', availabilityFilter = '', eanFilter = '', imageFilter = '',
+  canonicalFilter = '', availabilityFilter = '', eanFilter = '', imageFilter = '', baseCategoryFilter = '',
   sortBy = 'source' } = {}) {
   const query = searchQuery.trim().toLocaleLowerCase('it');
   const filtered = [];
@@ -33,6 +33,7 @@ export function filterCatalogProducts(products, { searchQuery = '', categoryFilt
     const product = products[index];
     if (categoryFilter && (typeof product.category === 'string' ? product.category.trim() : '') !== categoryFilter) continue;
     if (canonicalFilter && product.canonicalCategory !== canonicalFilter) continue;
+    if (baseCategoryFilter && (product.baseCategory?.path?.length ? 'assigned' : 'unassigned') !== baseCategoryFilter) continue;
     if (availabilityFilter && (product.quantity > 0 || String(product.availability).toLowerCase() === 'in stock' ? 'available' : 'unavailable') !== availabilityFilter) continue;
     if (eanFilter && (product.basePreflight?.checks?.find(check => check.code === 'ean')?.status === 'WARNING' ? 'invalid' : product.ean ? 'present' : 'missing') !== eanFilter) continue;
     if (imageFilter && (product.imageLink ? 'present' : 'missing') !== imageFilter) continue;

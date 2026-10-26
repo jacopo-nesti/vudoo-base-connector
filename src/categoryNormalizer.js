@@ -2,6 +2,7 @@ import { readFile, readdir, mkdir, open, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { cleanName, nameIdentity } from './names.js';
+import { resolveEffectiveBaseCategory } from './categoryResolution.js';
 
 const configRoot = process.env.VUDOO_CONFIG_ROOT
   ? pathToFileURL(`${path.resolve(process.env.VUDOO_CONFIG_ROOT)}${path.sep}`)
@@ -98,7 +99,7 @@ export function validateCategoryMappings(value) {
   return { canonical, suppliers, supplierByTitle };
 }
 
-export async function loadCategoryMappings(rootUrl = configRoot) {
+export async function loadCategoryMappings(rootUrl = configRoot, { channelTitle } = {}) {
   const canonicalUrl = new URL('canonical-categories.json', rootUrl);
   const suppliersUrl = new URL('suppliers/', rootUrl);
   let canonicalText;
@@ -113,12 +114,24 @@ export async function loadCategoryMappings(rootUrl = configRoot) {
   const suppliers = {};
   for (const filename of filenames.filter(name => name.endsWith('.json')).sort()) {
     const file = `config/suppliers/${filename}`;
-    const item = objectValue(parseJson(await readFile(new URL(filename, suppliersUrl), 'utf8'), file), file);
+    let item;
+    try { item = objectValue(parseJson(await readFile(new URL(filename, suppliersUrl), 'utf8'), file), file); }
+    catch (error) { if (channelTitle) continue; throw error; }
+    if (channelTitle && !(Array.isArray(item.source_titles) && item.source_titles.some(title =>
+      typeof title === 'string' && nameIdentity(title) === nameIdentity(channelTitle)))) continue;
     const id = nonEmptyText(item.supplier_id, `${file}: supplier_id`);
     if (Object.hasOwn(suppliers, id)) throw new Error(`Supplier ID duplicato: "${id}" (${file}).`);
     suppliers[id] = { ...item, file };
   }
-  return validateCategoryMappings({ canonical, suppliers });
+  if (!channelTitle) return validateCategoryMappings({ canonical, suppliers });
+  // Operational preflight validates only the active supplier's references. The
+  // unscoped loader remains available for global diagnostics/config checks.
+  const needed = new Set(Object.values(suppliers).flatMap(item => Object.values(item.categories ?? {}))
+    .filter(value => typeof value === 'string'));
+  const scopedCanonical = Object.fromEntries(Object.entries(canonical).filter(([id, value]) =>
+    needed.has(id) || (value && Array.isArray(value.base_path) && value.base_path.length &&
+      value.base_path.every(part => typeof part === 'string' && part.trim()))));
+  return validateCategoryMappings({ canonical: scopedCanonical, suppliers });
 }
 
 export function resolveSupplierProfile(channelTitle, mappings) {
@@ -147,7 +160,7 @@ export function normalizeCategory({ supplier, sourceCategory, mappings }) {
   };
 }
 
-export function analyzeCatalogCategories(catalog, mappings) {
+export function analyzeCatalogCategories(catalog, mappings, runtimeMappings = {}) {
   const counts = new Map();
   let missingSourceCategoryProducts = 0;
   for (const product of catalog.products) {
@@ -168,25 +181,38 @@ export function analyzeCatalogCategories(catalog, mappings) {
   } catch (error) {
     supplierError = error.message;
   }
-  const entries = [...counts.values()].map(entry => ({
-    ...entry,
-    ...normalizeCategory({ supplier, sourceCategory: entry.sourceCategory, mappings }),
-  })).sort((left, right) => left.sourceCategory.localeCompare(right.sourceCategory, 'it', { sensitivity: 'base' }));
-  const byKey = new Map(entries.map(entry => [nameIdentity(entry.sourceCategory), entry]));
   const mapProduct = product => {
     const sourceCategory = product.product_type;
-    const entry = isMissingSourceCategory(sourceCategory) ? null : byKey.get(nameIdentity(sourceCategory));
-    const selectedCanonical = entry?.mapped && product.canonical_category && mappings.canonical.has(product.canonical_category)
-      ? product.canonical_category : entry?.canonicalCategory;
-    return entry?.mapped ? {
-      ...product,
-      source_category: sourceCategory,
-      canonical_category: selectedCanonical,
-      base_category_path: [...mappings.canonical.get(selectedCanonical).basePath],
-    } : { ...product, source_category: sourceCategory };
+    const resolved = resolveEffectiveBaseCategory({ sourceTitle: catalog.channelTitle,
+      sourceCategory, canonicalCategory: product.canonical_category,
+      manualCategory: product.base_category_override, runtimeMappings, supplier, mappings });
+    return { ...product, source_category: sourceCategory,
+      canonical_category: resolved.canonicalCategory,
+      base_category_path: resolved.path,
+      category_id: resolved.categoryId,
+      base_category_origin: resolved.origin };
   };
   const products = catalog.products.map(mapProduct);
   const uniqueProducts = catalog.uniqueProducts.map(mapProduct);
+  const resolvedBySource = new Map();
+  for (const product of products) {
+    if (isMissingSourceCategory(product.source_category)) continue;
+    const key = nameIdentity(product.source_category);
+    const group = resolvedBySource.get(key) ?? [];
+    group.push(product); resolvedBySource.set(key, group);
+  }
+  const entries = [...counts.values()].map(entry => {
+    const group = resolvedBySource.get(nameIdentity(entry.sourceCategory)) ?? [];
+    const paths = new Map(group.filter(product => product.base_category_path?.length)
+      .map(product => [JSON.stringify(product.base_category_path), product.base_category_path]));
+    const allMapped = group.length > 0 && group.every(product => product.base_category_path?.length);
+    const status = allMapped ? paths.size === 1 ? 'mapped' : 'mixed'
+      : paths.size ? 'partial' : 'unmapped';
+    const canonicalIds = new Set(group.map(product => product.canonical_category).filter(Boolean));
+    return { ...entry, status, mapped: allMapped,
+      canonicalCategory: canonicalIds.size === 1 ? [...canonicalIds][0] : null,
+      basePath: paths.size === 1 ? [...paths.values()][0] : null };
+  }).sort((left, right) => left.sourceCategory.localeCompare(right.sourceCategory, 'it', { sensitivity: 'base' }));
   const isMapped = product => Array.isArray(product.base_category_path) && product.base_category_path.length > 0;
   const isMissing = product => isMissingSourceCategory(product.source_category);
   const mappedProducts = products.filter(isMapped);
@@ -237,7 +263,7 @@ export function formatCategoryReport(analysis) {
     '',
   ];
   for (const entry of analysis.entries) {
-    if (entry.mapped) lines.push(`MAPPATA: ${entry.sourceCategory} → ${entry.canonicalCategory} → ${entry.basePath.join(' > ')} (${entry.count} prodotti)`);
+    if (entry.mapped) lines.push(`MAPPATA: ${entry.sourceCategory} → ${entry.canonicalCategory ?? 'override/mapping utente'} → ${entry.basePath?.join(' > ') ?? 'più categorie Base'} (${entry.count} prodotti)`);
     else lines.push(`NON MAPPATA: ${entry.sourceCategory} (${entry.count} prodotti)`);
   }
   lines.push('', `Risultato: ${analysis.mappedCount} categorie mappate, ${analysis.unmappedCount} categorie non mappate`);

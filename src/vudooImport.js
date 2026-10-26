@@ -84,8 +84,8 @@ export async function preflightPreparedVudooCatalog(catalog) {
     throw new Error('Catalogo Vudoo preparato non valido.');
   }
   const categoryPolicy = getUnmappedCategoryPolicy();
-  const mappings = await loadCategoryMappings();
-  const categories = analyzeCatalogCategories(catalog, mappings);
+  const mappings = await loadCategoryMappings(undefined, { channelTitle: catalog.channelTitle });
+  const categories = analyzeCatalogCategories(catalog, mappings, catalog.runtimeCategoryMappings);
   categories.policy = categoryPolicy;
   log(`\n${formatCategoryReport(categories)}`);
   log(`Categorie senza mapping Base.com: ${categories.withoutBaseCategoryProducts} prodotti (warning; category_id omesso).`);

@@ -7,7 +7,7 @@ import {
 import { createInventoryTagService } from './inventoryTags.js';
 import { normalizeProduct, buildBasePayload, hasProductChanged, assertVudooSkuCompatibility, planManualImageData } from './products.js';
 import { getManufacturerMap, ensureManufacturer } from './manufacturers.js';
-import { getGlobalCategoryIndex, resolveGlobalCategoryPath } from './categories.js';
+import { getGlobalCategoryIndex, resolveProductGlobalCategory } from './categories.js';
 import { runPreflightCheck } from './preflight.js';
 
 export const BULK_LOOKUP_THRESHOLD = 50;
@@ -147,7 +147,7 @@ export async function runImport(prepared) {
         if (tagPlan.wouldCreate.length) log(`[DRY_RUN] Product Tags da creare: ${tagPlan.wouldCreate.join(', ')}`);
 
         const categoryPath = product.base_category_path;
-        const categoryPlan = resolveGlobalCategoryPath(categoryPath, globalCategoryIndex);
+        const categoryPlan = resolveProductGlobalCategory(product, globalCategoryIndex);
         const categoryId = categoryPlan.categoryId;
         if (categoryPath?.length && categoryId == null) {
           log(`[WARNING CATEGORIA] ${categoryPlan.status}: ${categoryPath.join(' > ')}; category_id omesso.`);

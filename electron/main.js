@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeImage } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadLocalEnvironment, resolveEnvironmentFile } from './localEnv.js';
@@ -8,10 +8,14 @@ import {
   loadSettings, readEnvironmentSettings, resetSettings, saveSettings,
 } from "./settingsManager.js";
 import { createWriteGuard } from "./writeGuard.js";
+import { attachWindowChrome, registerWindowIpc } from './windowChrome.js';
 import {
   PRODUCT_OVERRIDES_FILE_NAME, loadProductOverrides, writeProductOverrides,
   saveProductOverride, saveProductFieldPatch, saveBulkProductField, saveBulkProductTags,
+  saveProductCategoryOverrides,
 } from './productOverrides.js';
+import { CATEGORY_MAPPINGS_FILE_NAME, categoryMappingKey, loadRuntimeCategoryMappings,
+  saveRuntimeCategoryMapping, removeRuntimeCategoryMapping } from './categoryMappingStore.js';
 import { getProductOverride } from './effectiveProduct.js';
 import { basePayloadPreview, assertBaseLocalSendable } from '../src/marketplaces/base/localPreview.js';
 import { validateBulkBaseInput } from '../src/productSchema.js';
@@ -72,6 +76,7 @@ async function bootstrap() {
   const { fetchParsedVudooCatalog } =
     await import("../src/vudooImport.js");
   const { loadCategoryMappings } = await import('../src/categoryNormalizer.js');
+  const { getGlobalCategoryIndex, resolveGlobalCategoryId } = await import('../src/categories.js');
 
   const { BULK_LOOKUP_THRESHOLD } = await import("../src/importer.js");
   const { BASE_PRODUCT_DETAILS_CHUNK_SIZE } = await import("../src/baseApi.js");
@@ -103,6 +108,11 @@ async function bootstrap() {
   let activeMappings = null;
   let activeInventoryStatus = null;
   const productOverridesPath = path.join(app.getPath('userData'), PRODUCT_OVERRIDES_FILE_NAME);
+  const categoryMappingsPath = path.join(app.getPath('userData'), CATEGORY_MAPPINGS_FILE_NAME);
+  let activeRuntimeMappings = {};
+  let runtimeMappingsError = null;
+  try { activeRuntimeMappings = await loadRuntimeCategoryMappings(categoryMappingsPath); }
+  catch (error) { runtimeMappingsError = redactToken(error?.message ?? error); }
   const manualImagesRoot = path.join(app.getPath('userData'), 'manual-product-images');
   const manufacturersPath = path.join(app.getPath('userData'), MANUFACTURERS_DB_FILE_NAME);
   const ordersPath = path.join(app.getPath('userData'), ORDERS_DB_FILE_NAME);
@@ -193,6 +203,7 @@ async function bootstrap() {
     const window = new BrowserWindow({
       width: 1200,
       height: 800,
+      frame: false,
 
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),
@@ -200,6 +211,8 @@ async function bootstrap() {
         nodeIntegration: false,
       },
     });
+
+    attachWindowChrome(window, app);
 
     if (app.isPackaged) {
       window.loadFile(path.join(__dirname, "../renderer/dist/index.html"));
@@ -209,6 +222,8 @@ async function bootstrap() {
   }
 
   async function startDesktopApp() {
+    Menu.setApplicationMenu(null);
+    registerWindowIpc(ipcMain, BrowserWindow);
     ipcMain.handle('orders:get', async (_event, orderId) => {
       try {
         const order = await readBaseOrder(orderId);
@@ -351,6 +366,7 @@ async function bootstrap() {
 
       const normalizedCompanyCode = companyCode.trim();
       const storedOverrides = await loadProductOverrides(productOverridesPath);
+      const storedRuntimeMappings = runtimeMappingsError ? null : await loadRuntimeCategoryMappings(categoryMappingsPath);
       activeCatalog = null;
       activeCompanyCode = null;
       activeCatalogLoadedAt = null;
@@ -359,13 +375,14 @@ async function bootstrap() {
       activeCatalog = await fetchParsedVudooCatalog(normalizedCompanyCode);
       activeCompanyCode = normalizedCompanyCode;
       activeOverrides = storedOverrides;
+      if (storedRuntimeMappings) activeRuntimeMappings = storedRuntimeMappings;
       let mappingError = null;
-      try { activeMappings = await loadCategoryMappings(); }
+      try { activeMappings = await loadCategoryMappings(undefined, { channelTitle: activeCatalog.channelTitle }); }
       catch (error) {
         activeMappings = { canonical: new Map(), suppliers: new Map(), supplierByTitle: new Map() };
         mappingError = redactToken(error.message);
       }
-      const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode);
+      const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings);
 
       let directoryResult;
       activeCatalogLoadedAt = new Date().toISOString();
@@ -385,7 +402,7 @@ async function bootstrap() {
         durationMs: Math.max(0, Date.now() - startedAt),
         products: projection.rows,
         quality: projection.quality,
-        mappingError,
+        mappingError: [mappingError, runtimeMappingsError].filter(Boolean).join(' ') || null,
         canonicalOptions: [...activeMappings.canonical.keys()].sort(),
       };
     });
@@ -398,8 +415,85 @@ async function bootstrap() {
         throw new Error('ID duplicato con dati supplier discordanti: correggere il feed prima di modificare.');
       }
       return { source, product: projectCatalogForOperator({ channelTitle: activeCatalog.channelTitle, products: [source] },
-        activeMappings, activeOverrides, activeCompanyCode).rows[0] };
+        activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings).rows[0] };
     }
+
+    async function verifiedGlobalCategory(categoryId) {
+      const index = await getGlobalCategoryIndex();
+      const category = resolveGlobalCategoryId(categoryId, index);
+      if (!category) throw new Error('Categoria Base.com non trovata o percorso ambiguo. Aggiorna le categorie.');
+      return category;
+    }
+
+    ipcMain.handle('categories:list', async () => {
+      try {
+        const index = await getGlobalCategoryIndex();
+        return { ok: true, categories: index.entries.map(entry => ({ categoryId: entry.categoryId,
+          parentId: entry.parentId, name: entry.name, path: entry.path })) };
+      } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
+    });
+    ipcMain.handle('categories:mappings-list', () => runtimeMappingsError
+      ? { ok: false, error: runtimeMappingsError }
+      : { ok: true, mappings: Object.values(activeRuntimeMappings) });
+    ipcMain.handle('categories:mapping-save', async (_event, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          if (!input || typeof input.sourceTitle !== 'string' || typeof input.sourceCategory !== 'string')
+            throw new Error('Categoria sorgente non valida.');
+          if (runtimeMappingsError) throw new Error(runtimeMappingsError);
+          if (!activeRuntimeMappings[categoryMappingKey(input.sourceTitle, input.sourceCategory)])
+            throw new Error('Mapping locale non trovato. Aggiorna l’elenco.');
+          const category = await verifiedGlobalCategory(input.categoryId);
+          activeRuntimeMappings = await saveRuntimeCategoryMapping(categoryMappingsPath,
+            activeRuntimeMappings, input.sourceTitle, input.sourceCategory, category);
+          const projection = activeCatalog ? projectCatalogForOperator(activeCatalog, activeMappings,
+            activeOverrides, activeCompanyCode, activeRuntimeMappings) : null;
+          return { ok: true, mappings: Object.values(activeRuntimeMappings),
+            products: projection?.rows ?? null, quality: projection?.quality ?? null };
+        });
+      } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
+    });
+    ipcMain.handle('categories:mapping-remove', async (_event, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          if (runtimeMappingsError) throw new Error(runtimeMappingsError);
+          if (!activeRuntimeMappings[categoryMappingKey(input?.sourceTitle ?? '', input?.sourceCategory ?? '')])
+            throw new Error('Mapping locale non trovato. Aggiorna l’elenco.');
+          activeRuntimeMappings = await removeRuntimeCategoryMapping(categoryMappingsPath,
+            activeRuntimeMappings, input?.sourceTitle, input?.sourceCategory);
+          const projection = activeCatalog ? projectCatalogForOperator(activeCatalog, activeMappings,
+            activeOverrides, activeCompanyCode, activeRuntimeMappings) : null;
+          return { ok: true, mappings: Object.values(activeRuntimeMappings),
+            products: projection?.rows ?? null, quality: projection?.quality ?? null };
+        });
+      } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
+    });
+    ipcMain.handle('catalog:category-save', async (_event, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          if (!activeCatalog || !activeCompanyCode || !Array.isArray(input?.ids) ||
+              !input.ids.length || input.ids.length > 5000 || new Set(input.ids).size !== input.ids.length)
+            throw new Error('Selezione prodotti non valida.');
+          if (input.saveAsMapping && runtimeMappingsError) throw new Error(runtimeMappingsError);
+          if (input.saveAsMapping && input.ids.length !== 1) throw new Error('Il mapping si salva da un solo prodotto.');
+          const sources = input.ids.map(id => oneProductResponse(id).source);
+          const category = input.categoryId == null ? null : await verifiedGlobalCategory(input.categoryId);
+          if (input.saveAsMapping && (!category || !sources[0].product_type?.trim()))
+            throw new Error('Categoria Vudoo sorgente necessaria per il mapping.');
+          activeOverrides = await saveProductCategoryOverrides(productOverridesPath, activeOverrides,
+            activeCompanyCode, sources, { category, expectedRevisions: input.expectedRevisions });
+          let mappingWarning = null;
+          if (input.saveAsMapping) {
+            try { activeRuntimeMappings = await saveRuntimeCategoryMapping(categoryMappingsPath,
+              activeRuntimeMappings, activeCatalog.channelTitle, sources[0].product_type, category); }
+            catch { mappingWarning = 'Override salvato; mapping riutilizzabile non salvato. Riprova da Impostazioni.'; }
+          }
+          const projection = projectCatalogForOperator(activeCatalog, activeMappings,
+            activeOverrides, activeCompanyCode, activeRuntimeMappings);
+          return { ok: true, warning: mappingWarning, products: projection.rows, quality: projection.quality };
+        });
+      } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
+    });
 
     function manualImageError(error) {
       const safeCodes = new Set(['INVALID_IMAGE', 'IMAGE_TOO_LARGE', 'IMAGE_LIMIT', 'IMAGE_NOT_FOUND']);
@@ -536,6 +630,8 @@ async function bootstrap() {
               isSimulation: () => baseConfig.dryRun === 'true' }).ensureInventoryTags(effective.tags);
           } catch (error) { tagPlan = { error: redactToken(error.message) }; }
         }
+        effective.category_id = row.baseCategory?.categoryId;
+        effective.base_category_path = row.baseCategory?.path;
         return { ok: true, product: row, preview: basePayloadPreview(effective, { tagPlan }), preflight: row.basePreflight };
       } catch (error) { return { ok: false, error: redactToken(error.message) }; }
     });
@@ -568,7 +664,7 @@ async function bootstrap() {
       try {
         await refreshActiveInventory();
         return { ok: true, result: await preflightSelectedCatalog(activeCatalog, selectedIds,
-          activeOverrides, activeCompanyCode), inventoryStatus: activeInventoryStatus };
+          activeOverrides, activeCompanyCode, activeRuntimeMappings), inventoryStatus: activeInventoryStatus };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
@@ -577,9 +673,9 @@ async function bootstrap() {
     ipcMain.handle("catalog:import-selected", async (_event, selectedIds) => {
       await refreshActiveInventory();
       const response = await runWriteOperation(() => {
-        const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode);
+        const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings);
         assertBaseLocalSendable(projection.rows, selectedIds);
-        return importSelectedCatalog(activeCatalog, selectedIds, activeOverrides, activeCompanyCode, importMediaHooks());
+        return importSelectedCatalog(activeCatalog, selectedIds, activeOverrides, activeCompanyCode, importMediaHooks(), activeRuntimeMappings);
       });
       return { ...response, inventoryStatus: activeInventoryStatus };
     });
@@ -588,7 +684,7 @@ async function bootstrap() {
       try {
         await refreshActiveInventory();
         return { ok: true, result: await preflightFullCatalog(activeCatalog,
-          activeOverrides, activeCompanyCode), inventoryStatus: activeInventoryStatus };
+          activeOverrides, activeCompanyCode, activeRuntimeMappings), inventoryStatus: activeInventoryStatus };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
@@ -596,7 +692,7 @@ async function bootstrap() {
 
     ipcMain.handle("catalog:import-all", async () => {
       await refreshActiveInventory();
-      const response = await runWriteOperation(() => importFullCatalog(activeCatalog, activeOverrides, activeCompanyCode, importMediaHooks()));
+      const response = await runWriteOperation(() => importFullCatalog(activeCatalog, activeOverrides, activeCompanyCode, importMediaHooks(), activeRuntimeMappings));
       return { ...response, inventoryStatus: activeInventoryStatus };
     });
 

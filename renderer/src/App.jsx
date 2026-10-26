@@ -249,15 +249,35 @@ function App() {
     }
 
     async function handleBulkEditProducts(input) {
-        const response = await window.electronAPI.bulkEditProducts(input);
+        const response = input.field === 'category' ? await window.electronAPI.saveProductCategory({
+            ids: input.ids, categoryId: input.categoryId, expectedRevisions: input.expectedRevisions,
+        }) : await window.electronAPI.bulkEditProducts(input);
         if (!response?.ok || !Array.isArray(response.products)) throw new Error(response?.error || 'Modifica massiva non riuscita.');
         const updated = new Map(response.products.map(product => [product.id, product]));
-        setCatalog(current => current && ({ ...current, products: current.products.map(product => {
+        setCatalog(current => current && ({ ...current, quality: response.quality ?? current.quality,
+            products: current.products.map(product => {
             const next = updated.get(product.id);
             return next ?? product;
         }) }));
         invalidateSelectedResults(); setFullPreflightResult(null); setFullImportResult(null);
-        return response.changedCount ?? response.products.length;
+        return input.field === 'category' ? input.ids.length : response.changedCount ?? response.products.length;
+    }
+
+    async function handleSaveProductCategory(input) {
+        const response = await window.electronAPI.saveProductCategory(input);
+        if (!response?.ok || !Array.isArray(response.products)) throw new Error(response?.error || 'Categoria non salvata.');
+        const updated = new Map(response.products.map(product => [product.id, product]));
+        setCatalog(current => current && ({ ...current, quality: response.quality ?? current.quality,
+            products: current.products.map(product =>
+            updated.get(product.id) ?? product) }));
+        invalidateSelectedResults(); setFullPreflightResult(null); setFullImportResult(null);
+        return { product: updated.get(input.ids[0]), warning: response.warning };
+    }
+
+    function handleCategoryMappingsChanged(products, quality) {
+        if (!Array.isArray(products)) return;
+        setCatalog(current => current && ({ ...current, products, quality: quality ?? current.quality }));
+        invalidateSelectedResults(); setFullPreflightResult(null); setFullImportResult(null);
     }
 
     function updateSelection(nextIds) {
@@ -442,7 +462,8 @@ function App() {
     companyCode, setCompanyCode, activeCatalogCode, catalog, catalogLoading, catalogError, catalogBusy, handleFetchCatalog,
     manufacturerDirectoryWarning, pendingManufacturerCode, setPendingManufacturerCode, handleSaveManufacturer,
     handleSelectInventory, handleRetryInventory,
-    handleSaveProductOverride, handleSaveProductFields, handleLocalMediaChanged, handleBulkEditProducts,
+    handleSaveProductOverride, handleSaveProductFields, handleSaveProductCategory,
+    handleCategoryMappingsChanged, handleLocalMediaChanged, handleBulkEditProducts,
     selectedIds, previousSelectedIds, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter,
     categories, canonicalCategories,
     extraFilters, setExtraFilters, filteredProducts, selectedIdSet,

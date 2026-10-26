@@ -22,6 +22,7 @@ export function buildGlobalCategoryIndex(rows) {
   }
   const byPath = new Map();
   const byName = new Map();
+  const entries = [];
   for (const row of byId.values()) {
     const path = [];
     const seen = new Set();
@@ -34,12 +35,29 @@ export function buildGlobalCategoryIndex(rows) {
       if (seen.size && path.length && current === undefined) throw new Error('getInventoryCategories: parent mancante.');
     }
     const entry = { ...row, path };
+    entries.push(entry);
     const pathKey = nameIdentity(path.join(' > '));
     const nameKey = nameIdentity(row.name);
     byPath.set(pathKey, [...(byPath.get(pathKey) ?? []), entry]);
     byName.set(nameKey, [...(byName.get(nameKey) ?? []), entry]);
   }
-  return { count: rows.length, byPath, byName };
+  return { count: rows.length, byId: new Map(entries.map(entry => [entry.categoryId, entry])), byPath, byName, entries };
+}
+
+export function resolveGlobalCategoryId(categoryId, index) {
+  const entry = index?.byId.get(Number(categoryId));
+  if (!entry || entry.categoryId !== Number(categoryId)) return null;
+  const matches = index.byPath.get(nameIdentity(entry.path.join(' > '))) ?? [];
+  return matches.length === 1 ? { categoryId: entry.categoryId, path: [...entry.path] } : null;
+}
+
+export function resolveProductGlobalCategory(product, index) {
+  if (!product?.category_id) return resolveGlobalCategoryPath(product?.base_category_path, index);
+  const direct = resolveGlobalCategoryId(product.category_id, index);
+  return direct && JSON.stringify(direct.path) === JSON.stringify(product.base_category_path)
+    ? { status: 'GLOBAL_CATEGORY_MATCH', ...direct, candidates: [] }
+    : { status: 'UNRESOLVED_CATEGORY_MAPPING', categoryId: null,
+      path: product.base_category_path ?? [], candidates: [] };
 }
 
 export async function getGlobalCategoryIndex() {

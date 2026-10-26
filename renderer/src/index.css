@@ -633,6 +633,35 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-primary)
 .product-dialog-tabs .btn:hover { background: var(--color-primary-light); }
 .product-dialog-header, .product-dialog-tabs, .product-dialog-footer { flex-shrink: 0; }
 .product-dialog-body { flex: 1 1 auto; }
+.base-category-detail { margin-top: 18px; padding: 16px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-raised); }
+.base-category-detail h3 { margin: 0 0 12px; }
+.base-category-detail dl { display: grid; gap: 8px; margin: 0 0 14px; }
+.base-category-detail dl > div { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); gap: 10px; }
+.base-category-detail dt { color: var(--color-text-secondary); }
+.base-category-detail dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.base-category-mapping-choice { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.base-category-dialog { width: min(760px, calc(100vw - 24px)); max-height: min(85vh, 800px); margin: auto; padding: 0; color: var(--color-text); border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); box-shadow: 0 24px 70px #18345830; }
+.base-category-dialog::backdrop { background: #0f213b73; }
+.base-category-dialog-content { display: grid; gap: 14px; padding: 22px; }
+.base-category-dialog-content h2 { margin: 0; }
+.base-category-dialog-content header p { margin: 4px 0 0; color: var(--color-text-secondary); }
+.base-category-results { max-height: 45vh; overflow: auto; border: 1px solid var(--color-border); border-radius: 8px; padding: 8px; }
+.base-category-line { display: flex; align-items: center; min-height: 34px; }
+.base-category-spacer { display: inline-block; width: 32px; flex: none; }
+.base-category-line > button:last-child { text-align: left; }
+.base-category-line > button[aria-pressed="true"], .base-category-result[aria-pressed="true"] { color: var(--color-primary-dark); background: var(--color-primary-light); }
+.base-category-result { display: flex; justify-content: space-between; gap: 16px; width: 100%; padding: 9px 12px; border: 0; border-bottom: 1px solid var(--color-border); background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.base-category-result:hover { background: var(--color-primary-light); }
+.base-category-result:disabled { opacity: .55; cursor: not-allowed; }
+.base-category-result small { white-space: nowrap; color: var(--color-text-secondary); }
+.base-category-breadcrumb { min-height: 22px; margin: 0; overflow-wrap: anywhere; }
+.base-category-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.category-mapping-list { display: grid; gap: 6px; max-height: 320px; overflow: auto; }
+.category-mapping-row { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto auto; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.category-mapping-row > div { display: grid; min-width: 0; }
+.category-mapping-row strong { overflow-wrap: anywhere; }
+.category-mapping-row small { color: var(--color-text-secondary); }
+@media (max-width: 660px) { .category-mapping-row { grid-template-columns: 1fr auto auto; } .category-mapping-row > div:nth-of-type(2) { grid-column: 1 / -1; } .base-category-result { display: grid; } }
 .product-editor-field { background: #fff; border-color: var(--color-border); }
 .source-badge { background: var(--color-primary-light); color: var(--color-primary-dark); border-radius: 4px; }
 .base-image-list > div { width: 116px; padding: 8px; border: 1px solid var(--color-border); border-radius: 8px; background: #fff; }
@@ -683,3 +712,23 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-primary)
   .page-stack:has(.catalog-source-bar) > .page-heading p { display: block; margin: 2px 0 0; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Frameless Electron chrome: the empty topbar space drags, every control stays clickable. */
+.topbar:has(.window-controls) { padding-right: 0; -webkit-app-region: drag; }
+.topbar-search, .topbar-end, .window-controls { -webkit-app-region: no-drag; }
+.window-controls { display: flex; align-self: stretch; flex: 0 0 auto; margin-left: 7px; }
+.window-drag-handle { display: none; -webkit-app-region: drag; }
+.window-control { display: grid; place-items: center; width: 42px; height: 100%; border: 0; border-radius: 0; background: transparent; color: var(--color-text-secondary); }
+.window-control svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: square; }
+.window-control:hover { background: var(--color-sidebar-hover); color: var(--color-text); }
+.window-control:active { background: var(--color-border); }
+.window-control--close:hover, .window-control--close:active { background: #c42b35; color: #fff; }
+@media (max-width: 600px) {
+  .topbar:has(.window-controls) { grid-template-columns: minmax(0,1fr) 32px auto; }
+  .topbar:has(.window-controls) .topbar-search { grid-column: 1; grid-row: 1; }
+  .window-drag-handle { display: grid; grid-column: 2; grid-row: 1; align-self: stretch; place-items: center; cursor: move; }
+  .window-drag-handle::before { content: ''; width: 14px; height: 18px; background-image: radial-gradient(circle, var(--color-text-muted) 1px, transparent 1.5px); background-size: 6px 6px; background-position: center; opacity: .8; }
+  .topbar:has(.window-controls) .window-controls { grid-column: 3; grid-row: 1; margin-left: 0; }
+  .topbar:has(.window-controls) .topbar-end { grid-column: 1 / -1; grid-row: 2; }
+  .window-control { width: 32px; }
+}

@@ -26,4 +26,42 @@
 .enterprise-bulk-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 14px; position:sticky; bottom:12px; z-index:5; border:1px solid #b8d5fa; background:#f3f8ff; box-shadow:0 6px 24px #18345820; border-radius:8px; margin:8px 0; }
 .enterprise-bulk-bar strong { margin-right:auto; }
 .status-chip-neutral { background:var(--color-surface-raised); color:var(--color-text-secondary); border-color:var(--color-border); }
+.product-configurable-table { table-layout:fixed; min-width:0; }
+.product-configurable-table th { position:sticky; }
+.product-configurable-table td { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.product-configurable-table .product-cell { min-width:0; max-width:none; }
+.product-configurable-table .product-title-line { flex-wrap:nowrap; overflow:hidden; }
+.product-configurable-table .product-inspect-trigger { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.product-configurable-table .product-cell small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.product-configurable-table .tag { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.product-configurable-table .pinned-selection { position:sticky; left:0; z-index:3; background:#fff; box-shadow:1px 0 var(--color-border); }
+.product-configurable-table thead .pinned-selection { z-index:6; background:var(--color-surface-raised); }
+.product-configurable-table .pinned-product-column { position:sticky; z-index:3; background:#fff; box-shadow:1px 0 var(--color-border); }
+.product-configurable-table thead .pinned-product-column { z-index:5; background:var(--color-surface-raised); }
+.product-configurable-table tbody tr:hover .pinned-product-column,
+.product-configurable-table tbody tr:hover .pinned-selection,
+.product-configurable-table tbody tr.selected .pinned-product-column,
+.product-configurable-table tbody tr.selected .pinned-selection { background:var(--color-surface); }
+.product-configurable-table th:not(.check-col) { padding-right:16px; }
+.column-resizer { position:absolute; right:0; top:0; bottom:0; width:9px; cursor:col-resize; touch-action:none; border-right:2px solid transparent; }
+.column-resizer:hover,.column-resizer:focus-visible { border-right-color:var(--color-primary); outline:none; }
+.settings-column-grid { display:grid; gap:8px; }
+.settings-column-row { display:grid; grid-template-columns:minmax(125px,1fr) 64px 78px minmax(130px,220px) 82px 72px; align-items:center; gap:10px; padding:9px 12px; border:1px solid var(--color-border); border-radius:7px; background:#fff; }
+.settings-column-row .settings-column-name { font-weight:650; }
+.settings-column-row .settings-column-order { display:flex; gap:3px; }
+.settings-column-row .settings-column-order button { min-width:27px; padding:3px 5px; }
+.settings-column-row input[type=number] { width:70px; }
+.settings-column-row input[type=range] { width:100%; }
+.settings-column-width { display:flex; align-items:center; gap:6px; }
+.settings-column-width small { white-space:nowrap; }
+.settings-table-preview { overflow:auto; border:1px solid var(--color-border); border-radius:7px; }
+.settings-table-preview table { table-layout:fixed; border-collapse:collapse; }
+.settings-table-preview th,.settings-table-preview td { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; padding:9px 11px; border-bottom:1px solid var(--color-border); font-size:11px; }
+.settings-table-preview th:first-child,.settings-table-preview td:first-child { position:sticky; left:0; z-index:2; background:#fff; }
+.settings-table-preview th:first-child { z-index:4; background:#f2f6fc; }
+.settings-table-preview th { background:#f2f6fc; color:var(--color-text-secondary); }
+.settings-table-preview [data-pinned=true] { position:sticky; z-index:2; background:#eef5ff; border-right:1px solid #bcd2ee; }
+.settings-table-preview th[data-pinned=true] { z-index:3; }
+.settings-table-preview[data-density=compact] th,.settings-table-preview[data-density=compact] td { padding-top:5px; padding-bottom:5px; }
+@media(max-width:950px) { .settings-column-row { grid-template-columns:minmax(110px,1fr) 64px 78px; } .settings-column-row .settings-column-width { grid-column:1/-1; } }
 @media(max-width:1300px) { .enterprise-table-tools { align-items:stretch; } .enterprise-view-row,.enterprise-preferences-row { width:100%; } }

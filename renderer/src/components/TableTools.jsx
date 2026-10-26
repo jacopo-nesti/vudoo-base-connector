@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { readTableState, shouldApplyStartupView, writeTableState } from '../uiPreferences.js';
+import { readTableState, shouldApplyStartupView, writeLayoutPreferences, writeTableState } from '../uiPreferences.js';
 import '../enterpriseTables.css';
 export function useTablePreferences(channel) {
   const [state,setState] = useState(()=>readTableState(channel));
@@ -13,7 +13,13 @@ export function SortHeading({label,field,sort,onSort}) {
 export default function TableTools({channel,preferences,filters,onApply,presets=[],filtered,onReset,onCustomize}) {
   const {state,setState,storageError}=preferences;
   const [selected,setSelected]=useState('');
-  function apply(view) { onApply(view.filters || {}); setState(s=>({...s,columns:view.columns || s.columns,density:view.density || s.density,sort:view.sort || 'source'})); }
+  function apply(view) {
+    onApply(view.filters || {});
+    if (Number.isInteger(view.pageSize)) writeLayoutPreferences({ pageSize: view.pageSize });
+    setState(s=>({...s,columns:view.columns || s.columns,order:view.order || s.order,
+      widths:view.widths || s.widths,pinned:view.pinned || s.pinned,
+      density:view.density || s.density,sort:view.sort || 'source'}));
+  }
   useEffect(()=>{ if (!shouldApplyStartupView(channel)) return; const initial=state.views.find(v=>v.id===state.startup); if(initial){apply(initial);setSelected(initial.id);} },[]);
   return <section className="enterprise-table-tools" aria-label="Viste e preferenze tabella">
     <div className="enterprise-view-row"><label className="form-field"><span>Vista</span><select className="select" value={selected} onChange={e=>{const id=e.target.value;setSelected(id);const view=[...presets,...state.views].find(v=>v.id===id);if(view)apply(view);}}><option value="">Vista corrente</option><optgroup label="Viste rapide">{presets.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}</optgroup><optgroup label="Viste personali">{state.views.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}</optgroup></select></label>

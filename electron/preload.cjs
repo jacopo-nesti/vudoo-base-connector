@@ -2,6 +2,19 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   ping: () => ipcRenderer.invoke("app:ping"),
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  getWindowState: () => ipcRenderer.invoke('window:get-state'),
+  onWindowStateChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, state) => callback({
+      maximized: state?.maximized === true,
+      fullscreen: state?.fullscreen === true,
+    });
+    ipcRenderer.on('window:state-changed', listener);
+    return () => ipcRenderer.removeListener('window:state-changed', listener);
+  },
   getBaseOrder: (orderId) => ipcRenderer.invoke('orders:get', orderId),
   listBaseOrders: (filters) => ipcRenderer.invoke('orders:list', filters),
   getStoredBaseOrder: (orderId) => ipcRenderer.invoke('orders:detail', orderId),
@@ -15,6 +28,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   restartApp: () => ipcRenderer.invoke("app:restart"),
   fetchCatalog: (companyCode) =>
     ipcRenderer.invoke("catalog:fetch", companyCode),
+  getBaseCategories: () => ipcRenderer.invoke('categories:list'),
+  listCategoryMappings: () => ipcRenderer.invoke('categories:mappings-list'),
+  saveCategoryMapping: (input) => ipcRenderer.invoke('categories:mapping-save', input),
+  removeCategoryMapping: (input) => ipcRenderer.invoke('categories:mapping-remove', input),
+  saveProductCategory: (input) => ipcRenderer.invoke('catalog:category-save', input),
   getManufacturers: () => ipcRenderer.invoke('manufacturers:list'),
   searchManufacturers: (query) => ipcRenderer.invoke('manufacturers:search', query),
   saveManufacturer: (input) => ipcRenderer.invoke('manufacturers:save', input),

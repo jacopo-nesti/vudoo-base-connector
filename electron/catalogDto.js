@@ -4,7 +4,7 @@ import { productOverrideRevision } from './productOverrides.js';
 
 export function toCatalogProductDto(product, { source = product.source ?? product,
   canonical = product, manual = {}, base = {}, storedOverrides = null,
-  basePreflight = null, supplier = null } = {}) {
+  basePreflight = null, supplier = null, baseCategory = null } = {}) {
   const provenance = Object.fromEntries(PRODUCT_FIELDS.map(field => [field.key,
     resolveProductValue({ source, canonical, manual, marketplace: base, key: field.key })]));
   provenance.tags = resolveProductValue({ source, canonical, manual, marketplace: base, key: 'tags' });
@@ -34,6 +34,8 @@ export function toCatalogProductDto(product, { source = product.source ?? produc
     supplier,
     sourceCategory: source?.product_type ?? null,
     canonicalCategory: product?.canonical_category ?? null,
+    baseCategory: baseCategory && { categoryId: baseCategory.categoryId, path: baseCategory.path,
+      origin: baseCategory.origin },
     imageLink: product.image_link ?? null,
     additionalImages: product.additional_image_link ?? [],
     manualImages: product.manual_images ?? [],

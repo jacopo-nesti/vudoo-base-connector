@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PRODUCT_FIELDS, BASE_OVERRIDE_FIELDS, validateFieldInput } from '../../../src/productSchema.js';
 import { editorFieldScope, editorFieldValue } from './productFieldValues.js';
 import ManualImageEditor from './ManualImageEditor.jsx';
+import BaseCategorySelector from './BaseCategorySelector.jsx';
 
 const sections = ['Identità', 'Contenuto', 'Commerciale', 'Classificazione', 'Media', 'Fisico', 'Logistica', 'Marca e dettagli', 'Base.com'];
 const originLabels = { supplier: 'Originale supplier', canonical: 'Normalizzato', manual: 'Override manuale', marketplace: 'Override Base' };
@@ -9,7 +10,7 @@ const symbols = { PASS: '✓', WARNING: '⚠', BLOCKING: '✕' };
 const display = value => Array.isArray(value) ? value.join('\n') : value == null ? '' : String(value);
 const fieldId = key => `field-${key.replace(/[^a-z0-9]/gi, '-')}`;
 
-export default function ProductDetailsDialog({ product, onClose, onSave, onMediaChange, canonicalOptions = [], initialSection = 'Identità' }) {
+export default function ProductDetailsDialog({ product, onClose, onSave, onSaveCategory, onMediaChange, canonicalOptions = [], initialSection = 'Identità' }) {
   const dialogRef = useRef(null);
   const [section, setSection] = useState('Identità');
   const [draft, setDraft] = useState({});
@@ -19,6 +20,8 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onMedia
   const [success, setSuccess] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [preview, setPreview] = useState(null);
+  const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
+  const [saveAsMapping, setSaveAsMapping] = useState(false);
   const dirty = Object.keys(draft).length > 0 || resets.length > 0;
   const fields = section === 'Base.com' ? BASE_OVERRIDE_FIELDS : PRODUCT_FIELDS.filter(field => field.section === section);
 
@@ -102,6 +105,17 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onMedia
       setPreview(response.preview);
     } catch (failure) { setError(failure.message); }
   }
+  async function saveCategory(category) {
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const result = await onSaveCategory({ ids: [product.id], categoryId: category?.categoryId ?? null,
+        saveAsMapping: Boolean(category && saveAsMapping),
+        expectedRevisions: { [product.id]: product.overrideRevision } });
+      setCategorySelectorOpen(false); setSaveAsMapping(false);
+      setSuccess(result.warning || 'Categoria Base.com salvata localmente. Preflight aggiornato.');
+    } catch (failure) { setError(failure?.message || 'Categoria non salvata. Riprova.'); }
+    finally { setSaving(false); }
+  }
 
   return <dialog ref={dialogRef} className="product-dialog product-dialog-wide" aria-labelledby="product-dialog-title"
     onClose={onClose} onCancel={event => { event.preventDefault(); close(); }}
@@ -144,12 +158,24 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onMedia
           </div>;
         })}</div>
         {section === 'Media' && <ManualImageEditor key={product.id} product={product} onProductChange={onMediaChange} />}
-        {section === 'Classificazione' && <div className="alert alert-info">Le associazioni supplier → categoria canonica restano in config/suppliers. Senza mapping verificato, Base.com riceverà il prodotto senza category_id.</div>}
+        {section === 'Classificazione' && <section className="base-category-detail"><h3>Categoria Base.com</h3>
+          <dl><div><dt>Categoria Vudoo originale</dt><dd>{product.sourceCategory || 'Non disponibile'}</dd></div>
+            <div><dt>Categoria canonica</dt><dd>{product.canonicalCategory || 'Non risolta'}</dd></div>
+            <div><dt>Categoria Base.com effettiva</dt><dd>{product.baseCategory?.path?.join(' › ') || 'Non assegnata'}</dd></div>
+            <div><dt>Origine</dt><dd>{{ product_override: 'Override prodotto', runtime_mapping: 'Mapping utente', supplier_mapping: 'Mapping supplier', canonical: 'Canonical', unresolved: 'Non risolta' }[product.baseCategory?.origin] || 'Non risolta'}</dd></div></dl>
+          {!product.baseCategory?.path?.length && <p className="alert alert-warning">Categoria Base.com non assegnata: il prodotto resta importabile senza category_id.</p>}
+          <label className="base-category-mapping-choice"><input type="checkbox" checked={saveAsMapping} disabled={!product.sourceCategory?.trim() || saving} onChange={event => setSaveAsMapping(event.target.checked)} /> Usa questa categoria anche per prodotti futuri con questa categoria Vudoo</label>
+          <div className="selection-actions"><button className="btn btn-secondary" type="button" disabled={saving || dirty} onClick={() => setCategorySelectorOpen(true)}>Cambia categoria Base.com</button>
+            {product.baseCategory?.origin === 'product_override' && <button className="btn btn-quiet" type="button" disabled={saving || dirty} onClick={() => saveCategory(null)}>Ripristina categoria automatica</button>}</div>
+          <small className="muted">La selezione salva solo dati locali. Nessuna modifica viene inviata subito a Base.com.</small>
+        </section>}
         {section === 'Base.com' && <section className="base-preview-panel"><h3>Perché non posso inviarlo?</h3>
           <p><strong>{product.basePreflight?.status || 'Non verificato'}</strong> · {product.basePreflight?.counts?.BLOCKING ?? 0} blocchi · {product.basePreflight?.counts?.WARNING ?? 0} avvisi</p>
           <ul className="check-list">{product.basePreflight?.checks?.map(check => <li key={check.code} className={`check-${check.status.toLowerCase()}`}>
             <strong>{symbols[check.status]} {check.message}</strong>{check.suggestedAction && <span>{check.suggestedAction}</span>}
-            {PRODUCT_FIELDS.some(field => field.key === check.field && field.editable) && <button type="button" className="btn btn-quiet btn-sm" onClick={() => goToField(check.field)}>Vai al campo</button>}</li>)}</ul>
+            {check.code === 'category' && check.status === 'WARNING'
+              ? <button type="button" className="btn btn-quiet btn-sm" disabled={dirty} onClick={() => { setSection('Classificazione'); setCategorySelectorOpen(true); }}>Assegna categoria</button>
+              : PRODUCT_FIELDS.some(field => field.key === check.field && field.editable) && <button type="button" className="btn btn-quiet btn-sm" onClick={() => goToField(check.field)}>Vai al campo</button>}</li>)}</ul>
           <button type="button" className="btn btn-secondary" disabled={dirty} onClick={showPreview}>Mostra payload Base e campi vuoti</button>
           {preview && <><p className="muted">{preview.note}</p>{preview.tagPlan && <div className="alert alert-info"><strong>Product Tags Base.com</strong>
             {preview.tagPlan.error ? <p>Verifica tag non riuscita: {preview.tagPlan.error}</p>
@@ -165,5 +191,6 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onMedia
         <button className="btn btn-secondary" type="button" disabled={saving} onClick={close}>Chiudi</button>
         <button className="btn btn-primary" type="submit" disabled={saving || !product.id || !dirty}>{saving ? 'Salvataggio…' : 'Salva modifiche'}</button></footer>
     </form>
+    {categorySelectorOpen && <BaseCategorySelector currentCategory={product.baseCategory} onClose={() => setCategorySelectorOpen(false)} onSelect={saveCategory} />}
   </dialog>;
 }

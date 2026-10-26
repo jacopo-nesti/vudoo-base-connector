@@ -3,8 +3,9 @@ import { normalizeCategory, resolveSupplierProfile } from '../src/categoryNormal
 import { baseLocalPreflight } from '../src/marketplaces/base/localPreview.js';
 import { effectiveProduct, getProductOverride } from './effectiveProduct.js';
 import { toCatalogProductDto } from './catalogDto.js';
+import { resolveEffectiveBaseCategory } from '../src/categoryResolution.js';
 
-export function projectCatalogForOperator(catalog, mappings, overrides, companyCode) {
+export function projectCatalogForOperator(catalog, mappings, overrides, companyCode, runtimeMappings = {}) {
   let supplier = null;
   try { supplier = resolveSupplierProfile(catalog.channelTitle, mappings); } catch { /* Visible as pending. */ }
   const rows = catalog.products.map(source => {
@@ -17,13 +18,17 @@ export function projectCatalogForOperator(catalog, mappings, overrides, companyC
       base_category_path: category.basePath ?? null };
     const overridesForProduct = typeof source.id === 'string' && source.id.trim()
       ? getProductOverride(overrides, companyCode, source.id) : {};
-    const manual = Object.fromEntries(Object.entries(overridesForProduct).filter(([key]) => key !== 'base' && key !== 'manual_images'));
+    const manual = Object.fromEntries(Object.entries(overridesForProduct).filter(([key]) =>
+      !['base', 'base_category', 'manual_images'].includes(key)));
     const base = overridesForProduct.base ?? {};
     const globalProduct = effectiveProduct(canonical, overridesForProduct);
     const baseProduct = effectiveProduct(canonical, overridesForProduct, 'base');
-    if (category.mapped && globalProduct.canonical_category && mappings.canonical.has(globalProduct.canonical_category)) {
-      baseProduct.base_category_path = [...mappings.canonical.get(globalProduct.canonical_category).basePath];
-    }
+    const resolved = resolveEffectiveBaseCategory({ sourceTitle: catalog.channelTitle,
+      sourceCategory: source.product_type, canonicalCategory: globalProduct.canonical_category,
+      manualCategory: overridesForProduct.base_category, runtimeMappings, supplier, mappings });
+    baseProduct.category_id = resolved.categoryId;
+    baseProduct.base_category_path = resolved.path;
+    baseProduct.base_category_origin = resolved.origin;
     const preflight = normalizationError
       ? { marketplace: 'base', status: 'BLOCKING_ERROR', canSend: false,
           counts: { PASS: 0, WARNING: 0, BLOCKING: 1 }, checks: [{ code: 'normalization', field: 'product', marketplace: 'base',
@@ -31,7 +36,8 @@ export function projectCatalogForOperator(catalog, mappings, overrides, companyC
             currentValue: null, suggestedAction: 'Correggere il feed supplier o il campo indicato.' }] }
       : baseLocalPreflight(baseProduct);
     return toCatalogProductDto(globalProduct, { source, canonical, manual, base, storedOverrides: overridesForProduct, basePreflight: preflight,
-      supplier: supplier?.id ?? catalog.channelTitle ?? null });
+      supplier: supplier?.id ?? catalog.channelTitle ?? null,
+      baseCategory: resolved });
   });
   const unique = new Set(rows.map(row => row.id).filter(Boolean));
   const counts = {

@@ -29,11 +29,23 @@ function Icon({ name }) { return <svg aria-hidden="true" viewBox="0 0 24 24" wid
 
 export default function AppShell({ page, onNavigate, supplier, dryRunMode, onSetOperatingMode, app, onCatalog, children }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLayoutPreferences().sidebarCollapsed);
+  const [windowMaximized, setWindowMaximized] = useState(false);
+  const windowApi = typeof window === 'undefined' ? null : window.electronAPI;
+  const hasWindowControls = Boolean(windowApi?.minimizeWindow && windowApi?.toggleMaximizeWindow && windowApi?.closeWindow && windowApi?.getWindowState);
   useEffect(() => {
     const sync = () => setSidebarCollapsed(readLayoutPreferences().sidebarCollapsed);
     window.addEventListener('vudoo:ui-preferences', sync);
     return () => window.removeEventListener('vudoo:ui-preferences', sync);
   }, []);
+  useEffect(() => {
+    if (!hasWindowControls) return undefined;
+    let mounted = true;
+    windowApi.getWindowState().then(state => {
+      if (mounted) setWindowMaximized(state?.maximized === true);
+    }).catch(() => {});
+    const unsubscribe = windowApi.onWindowStateChanged?.(state => setWindowMaximized(state.maximized === true));
+    return () => { mounted = false; unsubscribe?.(); };
+  }, [hasWindowControls, windowApi]);
   function toggleSidebar() {
     const next = !sidebarCollapsed;
     if (writeLayoutPreferences({ sidebarCollapsed: next })) setSidebarCollapsed(next);
@@ -47,7 +59,13 @@ export default function AppShell({ page, onNavigate, supplier, dryRunMode, onSet
     <header className="topbar">
       <div className="topbar-context"><span className="topbar-eyebrow">PRODUCT MANAGER</span><strong>{sections.find(item => item.page === activePage(page))?.label || 'Vudoo'}</strong></div>
       <label className="topbar-search"><svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><span className="sr-only">Cerca prodotti, SKU, EAN, ID Vudoo</span><input type="search" placeholder="Cerca prodotti, SKU, EAN, ID Vudoo..." value={app.searchQuery} onChange={event => { app.setSearchQuery(event.target.value); if (page !== 'base-catalog') onNavigate('base-catalog'); }} /></label>
+      {hasWindowControls && <div className="window-drag-handle" aria-hidden="true" title="Trascina la finestra" />}
       <div className="topbar-end"><WorkspaceTools onNavigate={onNavigate} onCatalog={onCatalog} busy={Boolean(app.catalogBusy || app.importLoading || app.fullImportLoading || app.manufacturerSyncLoading)} onSearch={() => { onNavigate('base-catalog'); requestAnimationFrame(() => document.querySelector('.topbar-search input')?.focus()); }} /><button type="button" className="catalog-context" onClick={onCatalog} disabled={app.catalogBusy}><span className="topbar-eyebrow">CATALOGO VUDOO</span><strong title={supplier || 'Carica catalogo'}>{supplier || 'Carica catalogo'} <span aria-hidden="true">⌄</span></strong>{app.catalog && <small>{app.catalog.totalProducts} prodotti · {app.activeCatalogCode}</small>}</button>{app.catalog && <button className="btn btn-quiet btn-sm" type="button" disabled={app.catalogBusy} onClick={() => app.handleFetchCatalog(app.activeCatalogCode)} aria-label="Ricarica catalogo Vudoo">↻</button>}{typeof dryRunMode === 'boolean' && <span className={`mode-badge ${dryRunMode ? 'mode-badge--simulation' : 'mode-badge--real'}`}>{dryRunMode ? 'SIMULAZIONE' : 'REALE'}</span>}</div>
+      {hasWindowControls && <div className="window-controls" role="group" aria-label="Controlli finestra">
+        <button type="button" className="window-control" title="Riduci a icona" aria-label="Riduci a icona" onClick={() => windowApi.minimizeWindow()}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" /></svg></button>
+        <button type="button" className="window-control" title={windowMaximized ? 'Ripristina finestra' : 'Ingrandisci finestra'} aria-label={windowMaximized ? 'Ripristina finestra' : 'Ingrandisci finestra'} onClick={() => windowApi.toggleMaximizeWindow()}><svg viewBox="0 0 16 16" aria-hidden="true">{windowMaximized ? <><path d="M5 3h8v8H5z" /><path d="M3 5v8h8" /></> : <path d="M3 3h10v10H3z" />}</svg></button>
+        <button type="button" className="window-control window-control--close" title="Chiudi finestra" aria-label="Chiudi finestra" onClick={() => windowApi.closeWindow()}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" /></svg></button>
+      </div>}
     </header>
     <main className="content" id="main-content"><div className="content-inner">{children}</div></main>
   </div>;

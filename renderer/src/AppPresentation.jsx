@@ -68,7 +68,7 @@ export default function AppPresentation({ model: app }) {
     </>}
     {page === 'system-diagnostics' && <SystemDiagnostics app={app} />}
     {page === 'system-problems' && <ProblemsPage app={app} onOpen={openProblem} onCatalog={() => setCatalogSwitcherOpen(true)} />}
-    {page === 'system-settings' && <SettingsPanel initialTab={settingsTab} dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} onDiagnostics={() => navigate('base-diagnostics')} filters={{ search: app.searchQuery, categoryFilter: app.categoryFilter, canonicalFilter: app.extraFilters?.canonicalFilter || '', availabilityFilter: app.extraFilters?.availabilityFilter || '', eanFilter: app.extraFilters?.eanFilter || '', imageFilter: app.extraFilters?.imageFilter || '' }} />}
+    {page === 'system-settings' && <SettingsPanel initialTab={settingsTab} dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} onDiagnostics={() => navigate('base-diagnostics')} onCategoryMappingsChanged={app.handleCategoryMappingsChanged} filters={{ search: app.searchQuery, categoryFilter: app.categoryFilter, canonicalFilter: app.extraFilters?.canonicalFilter || '', availabilityFilter: app.extraFilters?.availabilityFilter || '', eanFilter: app.extraFilters?.eanFilter || '', imageFilter: app.extraFilters?.imageFilter || '', baseCategoryFilter: app.extraFilters?.baseCategoryFilter || '' }} />}
     {page === 'system-help' && <HelpPage />}
     {page === 'base-overview' && <DashboardPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
     {page === 'base-manufacturers' && <ManufacturersPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
@@ -88,7 +88,7 @@ export default function AppPresentation({ model: app }) {
       onDeselectFiltered: deselectFiltered, onClearSelection: clearSelection,
       onUndo: app.undoLastSelectionChange, canUndo: app.previousSelectedIds !== null,
       onPreflightSelected: app.handlePreflightSelected, preflightLoading: app.preflightLoading,
-      onSaveProduct: app.handleSaveProductFields,
+      onSaveProduct: app.handleSaveProductFields, onSaveCategory: app.handleSaveProductCategory,
       onMediaChange: app.handleLocalMediaChanged,
       onBulkEditProducts: app.handleBulkEditProducts,
       onSelectInventory: app.handleSelectInventory, onRetryInventory: app.handleRetryInventory,

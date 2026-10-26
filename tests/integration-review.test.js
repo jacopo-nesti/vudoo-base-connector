@@ -159,6 +159,30 @@ test('Core: preflight di catalogo già preparato non ripete il fetch', async () 
   assert.equal(result.calls.filter(call => call.method === 'VUDOO_GET').length, 1);
 });
 
+test('Core: preflight Stifflex non è bloccato da canonical assente nel supplier Mazzuoli estraneo', async () => {
+  const supplierConfigs = [
+    { filename: 'stifflex.json', value: { supplier_id: 'STIFFLEX', source_titles: ['Test Supplier'],
+      categories: { 'Categoria A': 'MAPPED_A' } } },
+    { filename: 'mazzuoli.json', value: { supplier_id: '365_BY_GIULIANO_MAZZUOLI',
+      source_titles: ['365 by Giuliano Mazzuoli'], categories: { Penne: 'WRITING_INSTRUMENTS' } } },
+  ];
+  const result = await sandbox({ entry: '../src/vudooImport.js',
+    xml: catalogXml(categorizedItem('SKU-STIFFLEX', 'Categoria A')),
+    categoryMappings: { canonical: partialCategoryMappings.canonical, suppliers: {} }, supplierConfigs,
+    categories: [{ category_id: 70, parent_id: 0, name: 'Categoria Mappata A' }],
+    action: async api => {
+      const parsed = await api.fetchParsedVudooCatalog('test-company');
+      const prepared = api.prepareSelectedVudooCatalog(parsed, ['SKU-STIFFLEX']);
+      const preflight = await api.preflightPreparedVudooCatalog(prepared);
+      assert.equal(preflight.categoryAnalysis.supplier.id, 'STIFFLEX');
+      assert.equal(preflight.categoryAnalysis.unmappedCount, 0);
+      assert.equal(preflight.selectedProducts.length, 1);
+    },
+  });
+  assert.equal(result.calls.filter(call => call.method === 'VUDOO_GET').length, 1);
+  assert.equal(result.calls.filter(call => /^(add|update|delete)/i.test(call.method)).length, 0);
+});
+
 test('Electron: preflight selettivo usa i record del catalogo attivo e restituisce un DTO senza secondo fetch', async () => {
   const selected = categorizedItem('SKU-SELECTED', 'Categoria A');
   const excluded = categorizedItem('SKU-EXCLUDED', 'Categoria non mappata')

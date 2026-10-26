@@ -41,6 +41,7 @@ export async function loadProductOverrides(filePath) {
               image.size > 0 && image.size <= 4_000_000 &&
               (image.base == null || (Number.isSafeInteger(image.base.productId) && image.base.productId > 0 &&
                 Number.isInteger(image.base.position) && image.base.position >= 1 && image.base.position <= 16)));
+          if (field === 'base_category') return !validBaseCategory(value);
           if (field === 'base') return !value || typeof value !== 'object' || Array.isArray(value) ||
             !Object.entries(value).every(([name, item]) => validStored(name, item, 'base'));
           return !validStored(field, value, 'manual');
@@ -49,6 +50,34 @@ export async function loadProductOverrides(filePath) {
     }
   }
   return parsed.products;
+}
+
+function validBaseCategory(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) &&
+    Number.isSafeInteger(value.categoryId) && value.categoryId > 0 &&
+    Array.isArray(value.path) && value.path.length > 0 && value.path.length <= 20 &&
+    value.path.every(part => typeof part === 'string' && part.trim() && part.length <= 200) &&
+    Object.keys(value).every(key => ['categoryId', 'path'].includes(key));
+}
+
+export async function saveProductCategoryOverrides(filePath, overrides, companyCode, sources,
+  { category, expectedRevisions }) {
+  if (!Array.isArray(sources) || !sources.length || sources.length > 5000 ||
+      !expectedRevisions || typeof expectedRevisions !== 'object' ||
+      (category !== null && !validBaseCategory(category))) throw new Error('Categoria Base.com non valida.');
+  const next = { ...overrides };
+  for (const source of sources) {
+    const key = productKey(companyCode, source?.id);
+    if (productOverrideRevision(overrides[key] ?? {}) !== expectedRevisions[source.id])
+      throw new Error(`Il prodotto ${source.id} è stato modificato: ricaricare la selezione.`);
+    const fields = { ...(overrides[key] ?? {}) };
+    if (category) fields.base_category = { categoryId: category.categoryId, path: [...category.path] };
+    else delete fields.base_category;
+    if (Object.keys(fields).length) next[key] = fields;
+    else delete next[key];
+  }
+  await writeProductOverrides(filePath, next);
+  return next;
 }
 
 function validStored(field, value, scope) {
