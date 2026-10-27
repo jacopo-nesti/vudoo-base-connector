@@ -8,7 +8,7 @@ export function shouldApplyStartupView(channel) {
 export function markStartupViewHandled(channel) { startupHandled.add(channel); }
 export function allowStartupViewOnNextEntry(channel) { startupHandled.delete(channel); }
 
-const layoutDefaults = Object.freeze({ sidebarCollapsed: false, pageSize: 50, theme: 'light' });
+export const layoutDefaults = Object.freeze({ sidebarCollapsed: false, pageSize: 50, theme: 'light', accent: 'blue', animations: true, tableFontSize: 12, radius: 8 });
 export function readLayoutPreferences(storage = globalThis.localStorage) {
   try {
     const all = JSON.parse(storage?.getItem(UI_KEY) || '{}');
@@ -16,6 +16,10 @@ export function readLayoutPreferences(storage = globalThis.localStorage) {
       sidebarCollapsed: typeof all?.layout?.sidebarCollapsed === 'boolean' ? all.layout.sidebarCollapsed : layoutDefaults.sidebarCollapsed,
       pageSize: Number.isInteger(all?.layout?.pageSize) && all.layout.pageSize >= 10 && all.layout.pageSize <= 200 ? all.layout.pageSize : layoutDefaults.pageSize,
       theme: ['light', 'dark', 'system'].includes(all?.layout?.theme) ? all.layout.theme : layoutDefaults.theme,
+      accent: ['blue', 'azure', 'cyan'].includes(all?.layout?.accent) ? all.layout.accent : layoutDefaults.accent,
+      animations: typeof all?.layout?.animations === 'boolean' ? all.layout.animations : layoutDefaults.animations,
+      tableFontSize: Number.isInteger(all?.layout?.tableFontSize) && all.layout.tableFontSize >= 12 && all.layout.tableFontSize <= 18 ? all.layout.tableFontSize : layoutDefaults.tableFontSize,
+      radius: Number.isInteger(all?.layout?.radius) && all.layout.radius >= 0 && all.layout.radius <= 24 ? all.layout.radius : layoutDefaults.radius,
     };
   } catch { return { ...layoutDefaults }; }
 }
@@ -23,8 +27,17 @@ export function writeLayoutPreferences(patch, storage = globalThis.localStorage)
   try {
     const all = JSON.parse(storage?.getItem(UI_KEY) || '{}');
     const layout = { ...readLayoutPreferences(storage), ...patch };
-    if (typeof layout.sidebarCollapsed !== 'boolean' || !Number.isInteger(layout.pageSize) || layout.pageSize < 10 || layout.pageSize > 200 || !['light', 'dark', 'system'].includes(layout.theme)) return false;
+    if (typeof layout.sidebarCollapsed !== 'boolean' || !Number.isInteger(layout.pageSize) || layout.pageSize < 10 || layout.pageSize > 200 || !['light', 'dark', 'system'].includes(layout.theme) || !['blue', 'azure', 'cyan'].includes(layout.accent) || typeof layout.animations !== 'boolean' || !Number.isInteger(layout.tableFontSize) || layout.tableFontSize < 12 || layout.tableFontSize > 18 || !Number.isInteger(layout.radius) || layout.radius < 0 || layout.radius > 24) return false;
     storage.setItem(UI_KEY, JSON.stringify({ ...all, schemaVersion: 1, layout }));
+    globalThis.dispatchEvent?.(new Event('vudoo:ui-preferences'));
+    return true;
+  } catch { return false; }
+}
+export function resetVisualPreferences(storage = globalThis.localStorage) {
+  try {
+    const all = JSON.parse(storage?.getItem(UI_KEY) || '{}');
+    storage.setItem(UI_KEY, JSON.stringify({ ...all, schemaVersion: 1, layout: { ...layoutDefaults },
+      base: all?.base ? { ...all.base, density: 'comfortable' } : all?.base }));
     globalThis.dispatchEvent?.(new Event('vudoo:ui-preferences'));
     return true;
   } catch { return false; }

@@ -18,7 +18,8 @@ test('theme defaults to light and persists alongside table and layout preference
   table.views = [{ id: 'view', name: 'Vista', widths: { price: 140 } }];
   writeTableState('base', table, storage);
   assert.equal(writeLayoutPreferences({ theme: 'dark', sidebarCollapsed: true, pageSize: 80 }, storage), true);
-  assert.deepEqual(readLayoutPreferences(storage), { theme: 'dark', sidebarCollapsed: true, pageSize: 80 });
+  assert.deepEqual(readLayoutPreferences(storage), { theme: 'dark', sidebarCollapsed: true, pageSize: 80,
+    accent: 'blue', animations: true, tableFontSize: 12, radius: 8 });
   assert.equal(readTableState('base', storage).widths.title, 440);
   assert.equal(readTableState('base', storage).density, 'compact');
   assert.equal(readTableState('base', storage).views[0].widths.price, 140);

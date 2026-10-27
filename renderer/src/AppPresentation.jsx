@@ -19,7 +19,7 @@ import { selectFilteredIds, deselectFilteredIds, clearSelectedIds } from './cata
 export default function AppPresentation({ model: app }) {
   const [catalogSwitcherOpen, setCatalogSwitcherOpen] = useState(false);
   const [problemFocus, setProblemFocus] = useState(null);
-  const [settingsTab, setSettingsTab] = useState('technical');
+  const [settingsTab, setSettingsTab] = useState('general');
   const problemFocusSequence = useRef(0);
   const { page, setPage, importScope, catalog, selectedIds, filteredProducts, updateSelection,
     visibleSelectedCount, catalogBusy, importLoading, fullImportLoading, manufacturerSyncLoading } = app;
@@ -32,7 +32,7 @@ export default function AppPresentation({ model: app }) {
   const navigate = next => {
     if (importLoading || fullImportLoading || manufacturerSyncLoading) return;
     if (next === 'base-settings') { setSettingsTab('base'); setPage('system-settings'); return; }
-    if (next === 'system-settings') setSettingsTab('technical');
+    if (next === 'system-settings') setSettingsTab('general');
     setPage(next);
   };
   const openProblem = problem => {
@@ -69,7 +69,7 @@ export default function AppPresentation({ model: app }) {
     </>}
     {page === 'system-diagnostics' && <SystemDiagnostics app={app} />}
     {page === 'system-problems' && <ProblemsPage app={app} onOpen={openProblem} onCatalog={() => setCatalogSwitcherOpen(true)} />}
-    {page === 'system-settings' && <SettingsPanel initialTab={settingsTab} dryRunMode={app.dryRunMode} onModeChanged={app.handleSettingsModeChanged} onDiagnostics={() => navigate('base-diagnostics')} onCategoryMappingsChanged={app.handleCategoryMappingsChanged} filters={{ search: app.searchQuery, categoryFilter: app.categoryFilter, canonicalFilter: app.extraFilters?.canonicalFilter || '', availabilityFilter: app.extraFilters?.availabilityFilter || '', eanFilter: app.extraFilters?.eanFilter || '', imageFilter: app.extraFilters?.imageFilter || '', baseCategoryFilter: app.extraFilters?.baseCategoryFilter || '' }} />}
+    {page === 'system-settings' && <SettingsPanel initialTab={settingsTab} dryRunMode={app.dryRunMode} baseConfigured={app.baseConfigured} baseConnection={app.baseConnection} catalog={catalog} onModeChanged={app.handleSettingsModeChanged} onDiagnostics={() => navigate('base-diagnostics')} onCategoryMappingsChanged={app.handleCategoryMappingsChanged} filters={{ search: app.searchQuery, categoryFilter: app.categoryFilter, canonicalFilter: app.extraFilters?.canonicalFilter || '', availabilityFilter: app.extraFilters?.availabilityFilter || '', eanFilter: app.extraFilters?.eanFilter || '', imageFilter: app.extraFilters?.imageFilter || '', baseCategoryFilter: app.extraFilters?.baseCategoryFilter || '' }} />}
     {page === 'system-help' && <HelpPage />}
     {page === 'base-overview' && <DashboardPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}
     {page === 'base-manufacturers' && <ManufacturersPage onNavigate={navigate} onLoadCatalog={app.handleFetchCatalog} catalogBusy={app.catalogBusy} catalogError={app.catalogError} />}

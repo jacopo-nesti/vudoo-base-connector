@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { UI_KEY, defaultColumns, readLayoutPreferences, writeLayoutPreferences, readTableState, writeTableState, sanitizeSnapshot, sortProductRows } from '../renderer/src/uiPreferences.js';
+import { UI_KEY, layoutDefaults, defaultColumns, readLayoutPreferences, writeLayoutPreferences, readTableState, writeTableState, sanitizeSnapshot, sortProductRows } from '../renderer/src/uiPreferences.js';
 import { statusTone } from '../renderer/src/statusPresentation.js';
 const memory = () => { const data = new Map(); return { getItem:key=>data.get(key), setItem:(key,value)=>data.set(key,value) }; };
 
 test('layout preferences survive reopening and table writes without discarding saved views', () => {
   const storage = memory();
-  assert.deepEqual(readLayoutPreferences(storage), { sidebarCollapsed: false, pageSize: 50, theme: 'light' });
+  assert.deepEqual(readLayoutPreferences(storage), layoutDefaults);
   assert.equal(writeLayoutPreferences({ sidebarCollapsed: true, pageSize: 80 }, storage), true);
   const state = readTableState('base', storage);
   state.views = [{ id: 'favorite', name: 'Operativa', filters: { search: 'crema' } }];
   state.startup = 'favorite';
   assert.equal(writeTableState('base', state, storage), true);
-  assert.deepEqual(readLayoutPreferences(storage), { sidebarCollapsed: true, pageSize: 80, theme: 'light' });
+  assert.deepEqual(readLayoutPreferences(storage), { ...layoutDefaults, sidebarCollapsed: true, pageSize: 80 });
   assert.equal(readTableState('base', storage).startup, 'favorite');
   assert.equal(writeLayoutPreferences({ pageSize: 201 }, storage), false);
   assert.equal(readLayoutPreferences(storage).pageSize, 80);

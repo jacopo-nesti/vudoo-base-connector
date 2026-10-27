@@ -21,6 +21,7 @@
 .table-sort span { color:var(--color-primary-dark); }
 .enterprise-table .table-scroll { max-height:65vh; overflow:auto; }
 .enterprise-table thead th { position:sticky; top:0; z-index:2; background:var(--color-surface-raised); box-shadow:0 1px var(--color-border); }
+.enterprise-table .product-configurable-table { font-size:var(--table-font-size,12px); }
 .enterprise-table[data-density="compact"] td { padding-top:7px; padding-bottom:7px; }
 .enterprise-table[data-density="compact"] .catalog-thumb { width:30px; height:30px; }
 .enterprise-bulk-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 14px; position:sticky; bottom:12px; z-index:5; border:1px solid var(--color-bulk-border); background:var(--color-bulk-bg); box-shadow:0 6px 24px #18345820; border-radius:8px; margin:8px 0; }

@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, shell } from "electron";
 import path from "node:path";
+import { createRequire } from 'node:module';
 import { fileURLToPath } from "node:url";
 import { loadLocalEnvironment, resolveEnvironmentFile } from './localEnv.js';
 import { preparePackagedConfiguration } from './packagedConfiguration.js';
@@ -29,6 +30,7 @@ import { saveLocalProductImage, removeLocalProductImage, readLocalImage, imageFo
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const packageVersion = createRequire(import.meta.url)('../package.json').version;
 
 async function bootstrap() {
   await app.whenReady();
@@ -324,6 +326,12 @@ async function bootstrap() {
       return { ok: true, inventoryStatus: await ensureActiveInventory(manufacturer) };
     });
     ipcMain.handle("settings:get", () => settingsResponse());
+    ipcMain.handle('app:local-info', () => ({ appName: 'Vudoo Product Manager', version: app.isPackaged ? app.getVersion() : packageVersion, dataPath: app.getPath('userData') }));
+    ipcMain.handle('app:copy-data-path', () => { clipboard.writeText(app.getPath('userData')); return { ok: true }; });
+    ipcMain.handle('app:open-data-folder', async () => {
+      const error = await shell.openPath(app.getPath('userData'));
+      return { ok: !error };
+    });
     ipcMain.handle("settings:save", async (_event, input) => {
       if (writeGuard.isBusy()) return { ok: false, code: 'importInProgress' };
       try {

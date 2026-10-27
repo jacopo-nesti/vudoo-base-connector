@@ -2,19 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import { notifyOperation } from './operationNotifications.js';
 import { rateLimitGuidance } from './rateLimitGuidance.js';
 import { parseNumericSettings } from './settingsValidation.js';
+import { baseConnectionView } from './baseConnectionView.js';
 import CategoryMappingsSettings from './components/CategoryMappingsSettings.jsx';
 import {
   allowStartupViewOnNextEntry, clampColumnWidth, defaultColumnOrder, defaultColumnWidths, defaultColumns, markStartupViewHandled,
-  pinnedColumnOffsets, productColumns, readLayoutPreferences, readTableState, visibleColumnOrder,
+  pinnedColumnOffsets, productColumns, readLayoutPreferences, readTableState, resetVisualPreferences, visibleColumnOrder,
   writeLayoutPreferences, writeTableState,
 } from './uiPreferences.js';
 
 const tabs = [
+  ['general', 'Generali'],
   ['technical', 'Tecniche'],
   ['catalog', 'Catalogo e importazione'],
   ['base', 'Base.com'],
   ['layout', 'Layout'],
   ['columns', 'Colonne prodotti'],
+  ['advanced', 'Avanzate'],
 ];
 const fields = [
   { key: 'vudooResultsLimit', label: 'Limite prodotti Vudoo', min: 1, sliderMin: 100, max: 100000, step: 100, defaultValue: 3000, section: 'technical', description: 'Numero massimo di risultati richiesti per catalogo.' },
@@ -65,6 +68,33 @@ function ToggleSetting({ id, title, description, checked, onChange, disabled }) 
   return <label className="settings-toggle"><span><strong>{title}</strong><small>{description}</small></span>
     <input id={id} type="checkbox" checked={Boolean(checked)} onChange={event => onChange(event.target.checked)} disabled={disabled} />
   </label>;
+}
+
+function LocalDataCard({ info, onCopy, onOpen, feedback }) {
+  return <section className="card settings-section"><h2>Dati locali</h2><p>Cartella dati dell’applicazione su questo computer.</p>
+    <strong>Cartella dati applicazione</strong><code className="settings-path">{info?.dataPath || 'Non disponibile'}</code>
+    <div className="settings-path-actions"><button type="button" className="btn btn-secondary btn-sm" disabled={!info?.dataPath} onClick={onCopy}>Copia percorso</button>
+      <button type="button" className="btn btn-secondary btn-sm" disabled={!info?.dataPath} onClick={onOpen}>Apri cartella dati</button></div>
+    {feedback && <small role="status">{feedback}</small>}
+  </section>;
+}
+
+function LayoutNumber({ id, label, value, min, max, unit = 'px', onChange }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => { const n = Number(draft); if (draft.trim() && Number.isFinite(n)) onChange(clamp(Math.round(n), min, max)); else setDraft(String(value)); };
+  return <div className="settings-control"><div className="settings-control-heading"><label htmlFor={id}>{label}</label><strong>{value} {unit}</strong></div>
+    <div className="settings-number-control"><span className="settings-range-label">{min}</span><input aria-label={`${label}: cursore`} type="range" min={min} max={max} value={value} onChange={event => onChange(Number(event.target.value))} /><span className="settings-range-label">{max}</span>
+      <input className="input mono" id={id} type="number" min={min} max={max} value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} /></div>
+  </div>;
+}
+
+export function LayoutPreview({ layout, density }) {
+  return <section className="card settings-section settings-preview" data-density={density}><h2>Anteprima in tempo reale</h2><p>Solo dati illustrativi: le scelte si applicano subito.</p>
+    <div className="settings-preview-card"><strong>◇ &nbsp; Esempio di card</strong><p>Un esempio dell’aspetto dei contenuti e delle azioni.</p><div className="settings-preview-actions"><span className="btn btn-primary">Azione principale</span><span className="btn btn-secondary">Azione secondaria</span></div></div>
+    <div className="settings-preview-table"><table><thead><tr><th>Prodotto</th><th>SKU</th><th>Prezzo</th></tr></thead><tbody>{[['Collana Venere', 'COL-001', '€ 49,90'], ['Orecchini Luna', 'ORE-002', '€ 29,90'], ['Bracciale Stella', 'BRA-003', '€ 39,00']].map(([name, sku, price]) => <tr key={sku}><td>{name}</td><td>{sku}</td><td>{price}</td></tr>)}</tbody></table></div>
+    <small className="muted">Tema: {layout.theme} · Accento: {layout.accent} · Densità: {density} · Testo: {layout.tableFontSize} px · Angoli: {layout.radius} px</small>
+  </section>;
 }
 
 function ColumnWidthInput({ columnKey, column, width, onCommit }) {
@@ -171,8 +201,8 @@ function ColumnsSettings({ state, onChange, filters, storageError, pageSize, onR
   </div>;
 }
 
-export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, onModeChanged, onDiagnostics, onCategoryMappingsChanged, filters = {} }) {
-  const [tab, setTab] = useState(initialTab || (scope === 'base' ? 'base' : 'technical'));
+export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, baseConfigured, baseConnection, catalog, onModeChanged, onDiagnostics, onCategoryMappingsChanged, filters = {} }) {
+  const [tab, setTab] = useState(initialTab || (scope === 'base' ? 'base' : 'general'));
   const [snapshot, setSnapshot] = useState(null);
   const [draft, setDraft] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -184,8 +214,12 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
   const [storageError, setStorageError] = useState(false);
   const [pageSizeInput, setPageSizeInput] = useState(() => String(readLayoutPreferences().pageSize));
   const [retryCount, setRetryCount] = useState(0);
+  const [localInfo, setLocalInfo] = useState(null);
+  const [localFeedback, setLocalFeedback] = useState('');
+  const resetDialog = useRef(null);
 
   useEffect(() => { if (initialTab && tabs.some(([id]) => id === initialTab)) setTab(initialTab); }, [initialTab]);
+  useEffect(() => { let active = true; window.electronAPI?.getLocalAppInfo?.().then(info => { if (active) setLocalInfo(info); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => {
     let active = true;
     if (!window.electronAPI?.getSettings) { setError('Collegamento con l’applicazione non disponibile.'); setLoading(false); return; }
@@ -215,6 +249,22 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
     const next = typeof updater === 'function' ? updater(table) : updater;
     if (writeTableState('base', next)) { markStartupViewHandled('base'); setTable(next); setStorageError(false); return true; }
     setStorageError(true); return false;
+  }
+  async function copyDataPath() {
+    try { const result = await window.electronAPI.copyAppDataPath(); setLocalFeedback(result?.ok ? 'Percorso copiato.' : 'Impossibile copiare il percorso.'); }
+    catch { setLocalFeedback('Impossibile copiare il percorso.'); }
+  }
+  async function openDataFolder() {
+    try { const result = await window.electronAPI.openAppDataFolder(); setLocalFeedback(result?.ok ? 'Cartella aperta.' : 'Impossibile aprire la cartella dati.'); }
+    catch { setLocalFeedback('Impossibile aprire la cartella dati.'); }
+  }
+  function restoreVisualPreferences() {
+    if (resetVisualPreferences()) {
+      setLayout(readLayoutPreferences()); setTable(readTableState('base'));
+      setPageSizeInput(String(readLayoutPreferences().pageSize)); setStorageError(false);
+      setLocalFeedback('Preferenze interfaccia ripristinate.');
+    } else setStorageError(true);
+    resetDialog.current?.close();
   }
   async function save(event) {
     event.preventDefault();
@@ -253,16 +303,36 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
     <div className="page-heading"><div><h1>Impostazioni</h1><p>Configurazione locale Vudoo e Base.com.</p></div></div>
     {snapshot.warning && <div className="alert alert-warning" role="alert">Il file delle impostazioni non è stato letto correttamente: sono in uso i valori predefiniti.</div>}
     {snapshot.environmentWarnings?.length > 0 && <div className="alert alert-warning" role="alert">Alcuni valori .env non sono validi: {snapshot.environmentWarnings.join(', ')}.</div>}
-    {tab === 'layout' && <div className="settings-sections">
-      <section className="card settings-section"><h2>Layout</h2><p>Queste preferenze vengono applicate e salvate subito su questo dispositivo.</p>
+    {tab === 'general' && <div className="settings-sections settings-cards">
+      <section className="card settings-section"><h2>Informazioni applicazione</h2><p>Stato corrente di Vudoo Product Manager.</p><dl className="settings-facts">
+        <div><dt>Applicazione</dt><dd>{localInfo?.appName || 'Vudoo Product Manager'}</dd></div><div><dt>Versione</dt><dd>{localInfo?.version || 'Non disponibile'}</dd></div>
+        <div><dt>Modalità</dt><dd>{dryRunMode === true ? 'Simulazione' : dryRunMode === false ? 'Reale' : 'Non disponibile'}</dd></div>
+        <div><dt>Catalogo attivo</dt><dd>{catalog?.manufacturerName || catalog?.channelTitle || 'Nessun catalogo caricato'}</dd></div>
+        <div><dt>Prodotti caricati</dt><dd>{catalog?.totalProducts ?? catalog?.products?.length ?? 'Non disponibile'}</dd></div>
+      </dl></section>
+      <section className="card settings-section"><h2>Base.com</h2><p>Stato condiviso con Diagnostica.</p><strong>{baseConnectionView(baseConnection?.configured ?? baseConfigured, baseConnection?.verification).text}</strong><div><button type="button" className="btn btn-secondary btn-sm" onClick={onDiagnostics}>Apri Diagnostica</button></div></section>
+      <LocalDataCard info={localInfo} onCopy={copyDataPath} onOpen={openDataFolder} feedback={localFeedback} />
+    </div>}
+    {tab === 'layout' && <div className="settings-sections settings-cards">
+      <section className="card settings-section"><h2>Layout</h2><p>Preferenze visive applicate e salvate subito su questo dispositivo.</p>
         <fieldset className="settings-theme"><legend>Tema</legend><div className="settings-theme-options">{[['light', 'Chiaro'], ['dark', 'Scuro'], ['system', 'Sistema']].map(([value, label]) =>
           <label key={value}><input type="radio" name="theme" value={value} checked={layout.theme === value} onChange={() => updateLayout({ theme: value })} />{label}</label>)}</div></fieldset>
+        <fieldset className="settings-theme"><legend>Accento colore</legend><div className="settings-choice-row">{[['blue', 'Blu'], ['azure', 'Azzurro'], ['cyan', 'Ciano']].map(([value, label]) => <label key={value}><span className={`settings-accent-swatch settings-accent-swatch--${value}`} aria-hidden="true" /><input type="radio" name="accent" value={value} checked={layout.accent === value} onChange={() => updateLayout({ accent: value })} />{label}</label>)}</div></fieldset>
         <div className="settings-control"><label htmlFor="sidebar-start">Sidebar all’avvio</label><select className="select" id="sidebar-start" value={layout.sidebarCollapsed ? 'collapsed' : 'expanded'} onChange={event => updateLayout({ sidebarCollapsed: event.target.value === 'collapsed' })}><option value="expanded">Espansa</option><option value="collapsed">Compressa</option></select></div>
         <div className="settings-control"><label htmlFor="table-density">Densità tabella</label><select className="select" id="table-density" value={table.density} onChange={event => updateTable(previous => ({ ...previous, density: event.target.value }))}><option value="comfortable">Comoda</option><option value="compact">Compatta</option></select></div>
+        <ToggleSetting id="layout-animations" title="Animazioni interfaccia" description="Riduce le transizioni decorative quando disattivate." checked={layout.animations} onChange={value => updateLayout({ animations: value })} />
+        <LayoutNumber id="layout-table-font-size" label="Dimensione testo tabella" min={12} max={18} value={layout.tableFontSize} onChange={value => updateLayout({ tableFontSize: value })} />
+        <LayoutNumber id="layout-radius" label="Angoli arrotondati" min={0} max={24} value={layout.radius} onChange={value => updateLayout({ radius: value })} />
         <div className="settings-control"><div className="settings-control-heading"><label htmlFor="page-size">Righe per pagina</label><strong>{layout.pageSize}</strong></div><div className="settings-number-control"><span className="settings-range-label">10</span><input type="range" aria-label="Righe per pagina: cursore" min="10" max="200" step="10" value={layout.pageSize} onChange={event => updateLayout({ pageSize: Number(event.target.value) })} /><span className="settings-range-label">200</span><input className="input mono" id="page-size" type="number" min="10" max="200" step="1" value={pageSizeInput} onChange={event => setPageSizeInput(event.target.value)} onBlur={commitPageSize} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitPageSize(); } }} /></div></div>
-      </section>{storageError && <p role="alert" className="alert alert-danger">Non è stato possibile salvare le preferenze locali.</p>}
+      </section><LayoutPreview layout={layout} density={table.density} />{storageError && <p role="alert" className="alert alert-danger">Non è stato possibile salvare le preferenze locali.</p>}
     </div>}
     {tab === 'columns' && <ColumnsSettings state={table} onChange={updateTable} filters={filters} storageError={storageError} pageSize={layout.pageSize} onResetPageSize={() => updateLayout({ pageSize: 50 })} />}
+    {tab === 'advanced' && <div className="settings-sections settings-cards"><LocalDataCard info={localInfo} onCopy={copyDataPath} onOpen={openDataFolder} feedback={localFeedback} />
+      <section className="card settings-section"><h2>Preferenze interfaccia</h2><p>Ripristina tema, accento, densità, sidebar, animazioni, dimensione testo, angoli e righe per pagina. Le viste salvate e le colonne restano disponibili.</p>
+        <div><button type="button" className="btn btn-secondary" onClick={() => resetDialog.current?.showModal()}>Ripristina preferenze interfaccia</button></div></section>
+      {storageError && <p role="alert" className="alert alert-danger">Non è stato possibile salvare le preferenze locali.</p>}
+      <dialog ref={resetDialog} className="settings-reset-dialog" aria-labelledby="reset-ui-title"><h2 id="reset-ui-title">Ripristinare le preferenze dell’interfaccia?</h2><p>Tema, densità, dimensioni e altre preferenze visive torneranno ai valori predefiniti.</p><p>I prodotti e i dati Base.com non verranno modificati.</p><div className="settings-preview-actions"><button type="button" className="btn btn-secondary" onClick={() => resetDialog.current?.close()}>Annulla</button><button type="button" className="btn btn-primary" onClick={restoreVisualPreferences}>Ripristina</button></div></dialog>
+    </div>}
     {['technical', 'catalog', 'base'].includes(tab) && <form className="settings-sections" onSubmit={save}>
       <section className="card settings-section"><div className="settings-section-heading"><div><h2>{tabs.find(([id]) => id === tab)?.[1]}</h2><p>{tab === 'technical' ? 'Configurazione del caricamento Vudoo.' : tab === 'catalog' ? 'Preparazione e limiti dell’importazione.' : 'Parametri operativi Base.com; la verifica della connessione resta in Diagnostica.'}</p></div>{tab === 'base' && <button className="btn btn-secondary btn-sm" type="button" onClick={onDiagnostics}>Apri Diagnostica</button>}</div>
         {tab === 'catalog' && <ToggleSetting id="setting-testMode" title="Limite di prova" description="Elabora un solo prodotto; non modifica la modalità Simulazione/Reale." checked={draft.testMode} onChange={value => update('testMode', value)} disabled={busy} />}
