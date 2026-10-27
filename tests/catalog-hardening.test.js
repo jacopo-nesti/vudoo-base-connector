@@ -94,13 +94,11 @@ test('[BLOCK] g:id duplicato con prezzo discordante non sceglie il primo record'
   }
 });
 
-test('[CONTINUE] categorie sorgente diverse possono usare lo stesso percorso canonico', () => {
+test('[CONTINUE] categorie sorgente diverse restano senza categoria Base senza mapping utente V2', () => {
   const analysis = categoryAnalysis(item() + item({ 'g:id': '389579', 'g:product_type': 'Seconda categoria' }));
   assert.equal(analysis.importableProducts, 2);
-  assert.equal(analysis.mappedCount, 2);
-  assert.deepEqual(analysis.mappedProducts.map(entry => entry.base_category_path), [
-    ['Alimentari', 'Birra'], ['Alimentari', 'Birra'],
-  ]);
+  assert.equal(analysis.mappedCount, 0);
+  assert.equal(analysis.unmappedProducts.length, 2);
 });
 
 test('[BLOCK] categoria reale senza mapping produce un errore operativo distinto da No name', () => {
@@ -112,19 +110,20 @@ test('[BLOCK] categoria reale senza mapping produce un errore operativo distinto
   assert.match(formatUnmappedCategoryError(analysis, 'block'), /Categoria non configurata: 1 prodotti/);
 });
 
-test('[SKIP] categoria reale senza mapping resta fuori dai prodotti importabili', () => {
+test('[SKIP legacy] categoria senza mapping V2 resta importabile senza categoria Base', () => {
   const analysis = categoryAnalysis(item({ 'g:product_type': 'Categoria non configurata' })
     + item({ 'g:id': '389579', 'g:product_type': 'Seconda categoria' }));
-  assert.equal(analysis.unmappedProducts.length, 1);
-  assert.deepEqual(analysis.mappedProducts.map(entry => entry.sku), ['389579']);
+  assert.equal(analysis.unmappedProducts.length, 2);
+  assert.deepEqual(analysis.mappedProducts.map(entry => entry.sku), []);
+  assert.equal(analysis.importableProducts, 2);
 });
 
-test('[SKIP] categoria configurata con null esclude solo il prodotto interessato', () => {
+test('[SKIP legacy] canonical configurata non determina il mapping V2', () => {
   const analysis = categoryAnalysis(item({ 'g:product_type': 'Categoria in bozza' })
     + item({ 'g:id': '389579', 'g:product_type': 'Seconda categoria' }));
-  assert.equal(analysis.unmappedCount, 1);
-  assert.equal(analysis.unmappedProducts.length, 1);
-  assert.deepEqual(analysis.mappedProducts.map(entry => entry.sku), ['389579']);
+  assert.equal(analysis.unmappedCount, 2);
+  assert.equal(analysis.unmappedProducts.length, 2);
+  assert.deepEqual(analysis.mappedProducts.map(entry => entry.sku), []);
 });
 
 test('[CONTINUE] titolo supplier con spazi e case diversi risolve lo stesso profilo', () => {

@@ -47,15 +47,13 @@ export function buildGlobalCategoryIndex(rows) {
 export function resolveGlobalCategoryId(categoryId, index) {
   const entry = index?.byId.get(Number(categoryId));
   if (!entry || entry.categoryId !== Number(categoryId)) return null;
-  const matches = index.byPath.get(nameIdentity(entry.path.join(' > '))) ?? [];
-  return matches.length === 1 ? { categoryId: entry.categoryId, path: [...entry.path] } : null;
+  return { categoryId: entry.categoryId, path: [...entry.path] };
 }
 
 export function resolveProductGlobalCategory(product, index) {
   if (!product?.category_id) return resolveGlobalCategoryPath(product?.base_category_path, index);
   const direct = resolveGlobalCategoryId(product.category_id, index);
-  return direct && JSON.stringify(direct.path) === JSON.stringify(product.base_category_path)
-    ? { status: 'GLOBAL_CATEGORY_MATCH', ...direct, candidates: [] }
+  return direct ? { status: 'GLOBAL_CATEGORY_MATCH', ...direct, candidates: [] }
     : { status: 'UNRESOLVED_CATEGORY_MAPPING', categoryId: null,
       path: product.base_category_path ?? [], candidates: [] };
 }

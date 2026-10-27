@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 export const SETTINGS_FILE_NAME = 'settings.json';
 
 export const DEFAULT_SETTINGS = Object.freeze({
-  testMode: true,
+  testMode: false,
   dryRun: false,
   unmappedCategoryPolicy: 'block',
   vudooResultsLimit: 3000,

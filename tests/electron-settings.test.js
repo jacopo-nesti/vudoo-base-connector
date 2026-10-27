@@ -31,11 +31,22 @@ test('Electron settings: a missing file uses backend defaults without creating a
 
 test('Modalità operativa: real di default, preferenza simulation persistita e reset', async () => {
   assert.equal(readEnvironmentSettings({}).settings.dryRun, false);
+  assert.equal(readEnvironmentSettings({}).settings.testMode, false);
   await withSettingsFile(async filePath => {
     await saveSettings(filePath, { dryRun: true });
     assert.equal(getEffectiveSettings(DEFAULT_SETTINGS, (await loadSettings(filePath)).settings).dryRun, true);
     await resetSettings(filePath);
     assert.equal(getEffectiveSettings(DEFAULT_SETTINGS, (await loadSettings(filePath)).settings).dryRun, false);
+  });
+});
+
+test('Limite di prova: default OFF, scelta esplicita persistita e reset', async () => {
+  await withSettingsFile(async filePath => {
+    assert.equal(getEffectiveSettings(DEFAULT_SETTINGS, (await loadSettings(filePath)).settings).testMode, false);
+    await saveSettings(filePath, { testMode: true });
+    assert.equal(getEffectiveSettings(DEFAULT_SETTINGS, (await loadSettings(filePath)).settings).testMode, true);
+    await resetSettings(filePath);
+    assert.equal(getEffectiveSettings(DEFAULT_SETTINGS, (await loadSettings(filePath)).settings).testMode, false);
   });
 });
 
@@ -184,6 +195,11 @@ test('Electron bootstrap imports the catalog projection only after applying save
   const projectionAt = main.indexOf("await import('./catalogProjection.js')");
   assert.ok(applyAt >= 0 && projectionAt > applyAt);
   assert.doesNotMatch(main, /import\s*\{\s*projectCatalogForOperator\s*\}\s*from/);
+  assert.ok(main.indexOf('baseConfig.refreshBaseToken()') > applyAt);
+  assert.ok(main.indexOf('baseConfig.refreshBaseToken()') < projectionAt);
+  const diagnosticsAt = main.indexOf('ipcMain.handle("environment:check"');
+  assert.doesNotMatch(main.slice(diagnosticsAt, main.indexOf('ipcMain.handle("app:runtime-mode"', diagnosticsAt)),
+    /loadLocalEnvironment|refreshBaseToken/);
 });
 
 test('Electron settings: reset removes overrides and restores original .env-derived values', async () => {

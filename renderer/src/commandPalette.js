@@ -4,6 +4,7 @@ export const SAFE_COMMANDS = Object.freeze([
   { id: 'system-problems', label: 'Problemi', hint: 'Apri pagina' },
   { id: 'base-overview', label: 'Panoramica Base.com', hint: 'Apri pagina' },
   { id: 'base-operations', label: 'Import / Operazioni', hint: 'Base.com' },
+  { id: 'base-categories', label: 'Categorie Base.com', hint: 'Albero categorie' },
   { id: 'base-diagnostics', label: 'Diagnostica Base.com', hint: 'Apri pagina' },
   { id: 'system-settings', label: 'Impostazioni', hint: 'Catalogo condiviso' },
   { id: 'catalog', label: 'Cambia catalogo', hint: 'Apri selettore' },

@@ -104,7 +104,7 @@ test('Anteprima Base distingue campi vuoti e non supportati, senza simulare ID r
   assert.equal(preview.payload.ean, null);
   assert.equal(preview.fields.find(item => item.key === 'ean').status, 'SUPPORTED_EMPTY');
   assert.equal(preview.fields.find(item => item.key === 'availability').status, 'NOT_SUPPORTED');
-  assert.equal(preview.unresolved.category_id, 'Risolto dal percorso canonico');
+  assert.equal(preview.unresolved.category_id, 'Ommesso: nessuna categoria Base verificata');
 });
 
 test('Ricerca e filtri su mille prodotti non perdono righe', () => {

@@ -34,12 +34,15 @@ export function baseLocalPreflight(product) {
   add({ code: 'price', field: 'price', status: priceOk ? 'PASS' : 'BLOCKING',
     message: priceOk ? 'Prezzo EUR valido.' : 'Prezzo EUR mancante o non valido.', currentValue: price ?? null,
     suggestedAction: priceOk ? null : 'Aprire Commerciale e inserire un prezzo EUR valido.' });
-  const category = product?.canonical_category;
-  const mapped = (product?.category_id > 0 || typeof category === 'string' && category.trim()) &&
+  const mapped = Number.isSafeInteger(product?.category_id) && product.category_id > 0 &&
     Array.isArray(product?.base_category_path) && product.base_category_path.length;
-  add({ code: 'category', field: 'canonical_category', status: mapped ? 'PASS' : 'WARNING',
-    message: mapped ? 'Categoria Base.com disponibile.' : 'Categoria Base.com non assegnata. Il prodotto verrà importato senza categoria.',
-    currentValue: mapped ? product.base_category_path.join(' > ') : category ?? product?.product_type ?? null,
+  add({ code: 'category', field: 'category_id', status: mapped ? 'PASS' : 'WARNING',
+    message: mapped ? 'Categoria Base.com disponibile.' : product?.base_category_origin === 'unverified_category'
+      ? 'Categoria Base.com non verificata: rileggi l’albero prima del preflight.'
+      : product?.base_category_origin === 'deleted_category'
+      ? 'Categoria selezionata non esiste più su Base.com. Seleziona una nuova categoria o ripristina.'
+      : 'Categoria Base.com non assegnata. Il prodotto verrà importato senza categoria.',
+    currentValue: mapped ? product.base_category_path.join(' > ') : product?.product_type ?? null,
     suggestedAction: mapped ? null : 'Assegnare una categoria esistente dal Product Manager, se disponibile.' });
   const sourceEan = product?.source?.ean;
   const ean = product?.ean;
@@ -93,8 +96,7 @@ export function basePayloadPreview(product, { tagPlan = null } = {}) {
   if (tags !== undefined) payload.tags = tagPlan?.names ?? tags;
   return { payload, unresolved: {
     inventory_id: 'Risolto dal preflight remoto Base', category_id: product?.category_id > 0
-      ? `ID ${product.category_id} da verificare nel preflight remoto` : product?.base_category_path?.length
-        ? 'Risolto dal percorso canonico' : 'Ommesso: nessuna categoria Base verificata',
+      ? `ID ${product.category_id} da verificare nel preflight remoto` : 'Ommesso: nessuna categoria Base verificata',
     manufacturer_id: 'Risolto dal brand', prices: product?.price ?? null, stock: product?.quantity ?? null,
     extra_fields: product?.additional_fields ?? {}, manual_images: manualImages,
   }, fields: baseFieldMatrix(product), tagPlan,

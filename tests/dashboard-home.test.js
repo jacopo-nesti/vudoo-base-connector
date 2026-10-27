@@ -50,7 +50,8 @@ test('Diagnostica mostra stato Base.com derivato dalla verifica reale', () => {
   const presentation = source('../renderer/src/AppPresentation.jsx');
   assert.ok(page.indexOf('<InventoryStatus') < page.indexOf('Stato sistema'));
   assert.ok(page.indexOf('Stato sistema') < page.indexOf('className="card connection-card"'));
-  assert.match(page, /setConnectionResult\(connectionResultFromChecks\(response\.checks\)\)/);
+  assert.match(page, /onConnectionChanged\?\.\(response\.baseConnection\)/);
+  assert.match(page, /getRuntimeMode\(\)/);
   assert.equal(connectionResultFromChecks([]), undefined);
   assert.equal(connectionResultFromChecks([{ title: 'Connessione Base.com & Inventory', ok: true }]), true);
   assert.equal(connectionResultFromChecks([{ title: 'Connessione Base.com & Inventory', ok: false }]), false);
@@ -61,6 +62,8 @@ test('Diagnostica mostra stato Base.com derivato dalla verifica reale', () => {
   assert.equal(baseConnectionView(true, false).text, 'Configurato - connessione non riuscita');
   assert.equal(baseConnectionView(true, true).tone, 'success');
   assert.equal(baseConnectionView(true, false).tone, 'error');
+  assert.equal(baseConnectionView(true, 'connected').tone, 'success');
+  assert.equal(baseConnectionView(true, 'failed').tone, 'error');
 });
 
 test('recenti: solo cataloghi caricati, data discendente, nome come fallback e limite quattro', () => {

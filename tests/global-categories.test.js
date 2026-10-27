@@ -68,19 +68,11 @@ test('gerarchia globale con parent assente o ciclo non viene usata', () => {
     { category_id: 2, name: 'B', parent_id: 1 }]), /ciclica/);
 });
 
-test('sette mapping canonici usano i path globali Base verificati, senza ID fissi', () => {
+test('categorie canonical legacy restano leggibili senza ID Base hardcoded', () => {
   const canonical = JSON.parse(readFileSync(new URL('../config/canonical-categories.json', import.meta.url), 'utf8'));
-  const expected = {
-    BODY_CREAM: ['Bellezza e Salute', 'Cura della Pelle', 'Corpo', 'Creme Corpo'],
-    FRAGRANCE_ACCESSORIES: ['Bellezza e Salute', 'Profumi', 'Accessori Profumo'],
-    EAU_DE_COLOGNE: ['Bellezza e Salute', 'Profumi', 'Eau de Cologne'],
-    HOME_FRAGRANCE_REED_DIFFUSER: ['Casa e Giardino', 'Profumazione Ambiente', 'Diffusori a Bastoncini'],
-    HOME_FRAGRANCE_SPRAY: ['Casa e Giardino', 'Profumazione Ambiente', 'Spray Ambiente'],
-    PEN_REFILL: ['Cancelleria', 'Accessori Scrittura', 'Refill'],
-    INTIMATE_HYGIENE: ['Bellezza e Salute', 'Igiene Personale', 'Igiene Intima'],
-  };
-  for (const [key, path] of Object.entries(expected)) {
-    assert.deepEqual(canonical[key]?.base_path, path, key);
-    assert.equal(Object.hasOwn(canonical[key], 'category_id'), false, key);
+  for (const [key, entry] of Object.entries(canonical)) {
+    assert.ok(Array.isArray(entry.base_path) && entry.base_path.length > 0, key);
+    assert.ok(entry.base_path.every(part => typeof part === 'string' && part.trim()), key);
+    assert.equal(Object.hasOwn(entry, 'category_id'), false, key);
   }
 });

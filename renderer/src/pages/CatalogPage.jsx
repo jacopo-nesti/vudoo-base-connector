@@ -54,6 +54,8 @@ export default function CatalogPage({ model }) {
   const heading = (label, field) => <SortHeading label={label} field={field} sort={sort} onSort={setSort} />;
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState('');
+  const [categoryRetrying, setCategoryRetrying] = useState(false);
+  const [categoryRetryError, setCategoryRetryError] = useState('');
   const {
     companyCode, setCompanyCode, activeCatalogCode, catalog, catalogLoading, catalogError, catalogBusy, onFetch,
     problemFocus, onProblemFocusHandled,
@@ -63,7 +65,8 @@ export default function CatalogPage({ model }) {
     visibleSelectedCount, selectableVisibleCount, hasActiveFilters,
     onToggle, onSelectFiltered, onDeselectFiltered, onClearSelection, onUndo,
     canUndo, onPreflightSelected, preflightLoading,
-    onSaveProduct, onSaveCategory, onMediaChange, onBulkEditProducts, onSelectInventory, onRetryInventory,
+    onSaveProduct, onSaveCategory, onCategoriesLoaded, onRetryCategories,
+    onMediaChange, onBulkEditProducts, onSelectInventory, onRetryInventory,
   } = model;
   const currentInspectorProduct = inspectorProduct && catalog?.products?.find(product => product.id === inspectorProduct.id);
 
@@ -133,6 +136,14 @@ export default function CatalogPage({ model }) {
 
     {catalog && <>
       {catalog.mappingError && <div className="alert alert-danger">Mapping categorie non disponibile: {catalog.mappingError}</div>}
+      {catalog.categoryError && <div className="alert alert-warning" role="alert">Categorie Base.com non disponibili.
+        <button className="btn btn-secondary btn-sm" type="button" disabled={categoryRetrying} onClick={async () => {
+          setCategoryRetrying(true); setCategoryRetryError('');
+          try { await onRetryCategories(); }
+          catch (error) { setCategoryRetryError(error?.message || 'Riprova più tardi.'); }
+          finally { setCategoryRetrying(false); }
+        }}>{categoryRetrying ? 'Aggiornamento…' : 'Riprova'}</button>
+        {categoryRetryError && <small>{categoryRetryError}</small>}</div>}
       <section className="card filter-card" aria-label="Ricerca e filtri">
         <div className="filter-grid">
           <label className="form-field grow filter-search"><span>Ricerca globale</span><input className="input" type="search" value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Cerca per nome, SKU, EAN o ID..." /></label>
@@ -187,7 +198,11 @@ export default function CatalogPage({ model }) {
       {selectedIds.length > 0 && <div className="enterprise-bulk-bar" role="region" aria-label="Azioni sui prodotti selezionati"><strong>{selectedIds.length} prodotti selezionati</strong><button className="btn btn-secondary btn-sm" disabled={catalogBusy || !selectedProducts.length} onClick={() => setBulkOpen(true)}>Modifica massiva</button><button className="btn btn-secondary btn-sm" disabled={catalogBusy} onClick={onPreflightSelected}>Controlli preliminari</button><button className="btn btn-quiet btn-sm" disabled={catalogBusy} onClick={onClearSelection}>Deseleziona</button></div>}
       {bulkOpen && <BulkEditorDialog selectedIds={selectedIds} selectedProducts={selectedProducts} onApply={onBulkEditProducts}
         onClose={() => setBulkOpen(false)} onDone={message => { setBulkFeedback(message); setBulkOpen(false); }} />}
-      <ProductDetailsDialog product={detailProduct} canonicalOptions={catalog.canonicalOptions ?? []} initialSection={detailSection} onClose={() => setDetailProduct(null)} onMediaChange={next => { setDetailProduct(next); onMediaChange(next); }} onSave={async input => { const next = await onSaveProduct(input); setDetailProduct(next); return next; }} onSaveCategory={async input => { const result = await onSaveCategory(input); setDetailProduct(result.product); return result; }} />
+      <ProductDetailsDialog product={detailProduct} canonicalOptions={catalog.canonicalOptions ?? []} initialSection={detailSection} onClose={() => setDetailProduct(null)} onMediaChange={next => { setDetailProduct(next); onMediaChange(next); }} onSave={async input => { const next = await onSaveProduct(input); setDetailProduct(next); return next; }} onSaveCategory={async input => { const result = await onSaveCategory(input); setDetailProduct(result.product); return result; }} onCategoryTreeLoaded={response => {
+        onCategoriesLoaded(response.products, response.quality, response);
+        const refreshed = response.products?.find(item => item.id === detailProduct?.id);
+        if (refreshed) setDetailProduct(refreshed);
+      }} />
     </>}
   </div>;
 }

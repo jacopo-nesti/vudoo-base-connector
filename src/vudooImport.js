@@ -4,11 +4,11 @@ import { runPreflightCheck } from './preflight.js';
 import { getVudooBaseFields } from './vudooBaseFields.js';
 import { buildBasePayload } from './products.js';
 import { runImport } from './importer.js';
+import { buildGlobalCategoryIndex, getGlobalCategoryIndex } from './categories.js';
 import { syncManufacturers } from './productor.js';
 import { dryRun, testMode, getUnmappedCategoryPolicy, getVudooResultsConfig, getVudooTimeoutConfig } from './config.js';
 import { log } from './logger.js';
 import {
-  loadCategoryMappings,
   analyzeCatalogCategories,
   formatCategoryReport,
 } from './categoryNormalizer.js';
@@ -79,13 +79,18 @@ export async function loadVudooCatalog(codiceAzienda, options = {}) {
   return prepareVudooSources(parsed, requestedSources, options);
 }
 
-export async function preflightPreparedVudooCatalog(catalog) {
+export async function preflightPreparedVudooCatalog(catalog, { onCategoryIndex } = {}) {
   if (!Array.isArray(catalog?.products) || !Array.isArray(catalog.uniqueProducts)) {
     throw new Error('Catalogo Vudoo preparato non valido.');
   }
   const categoryPolicy = getUnmappedCategoryPolicy();
-  const mappings = await loadCategoryMappings(undefined, { channelTitle: catalog.channelTitle });
-  const categories = analyzeCatalogCategories(catalog, mappings, catalog.runtimeCategoryMappings);
+  // Legacy canonical configuration remains available for diagnostics only.
+  const mappings = { canonical: new Map(), suppliers: new Map(), supplierByTitle: new Map() };
+  const needsCategoryVerification = catalog.products.some(product => product.base_category_override?.categoryId > 0) ||
+    Object.keys(catalog.runtimeCategoryMappings ?? {}).length > 0;
+  const categoryIndex = needsCategoryVerification ? await getGlobalCategoryIndex() : buildGlobalCategoryIndex([]);
+  if (needsCategoryVerification) onCategoryIndex?.(categoryIndex);
+  const categories = analyzeCatalogCategories(catalog, mappings, catalog.runtimeCategoryMappings, categoryIndex);
   categories.policy = categoryPolicy;
   log(`\n${formatCategoryReport(categories)}`);
   log(`Categorie senza mapping Base.com: ${categories.withoutBaseCategoryProducts} prodotti (warning; category_id omesso).`);
@@ -102,6 +107,7 @@ export async function preflightPreparedVudooCatalog(catalog) {
     products: categories.products.filter(hasImportableIdentity),
     uniqueProducts: categories.uniqueProducts.filter(hasImportableIdentity),
     categoryAnalysis: categories,
+    globalCategoryIndex: categoryIndex,
   };
   const preflight = importableCatalog.products.length > 0
     ? await runPreflightCheck(importableCatalog)

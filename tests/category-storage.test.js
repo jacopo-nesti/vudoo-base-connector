@@ -89,8 +89,8 @@ test('Categorie sorgente mancanti: assente, vuota e No name sono distinte dalle 
   const analysis = analyzeCatalogCategories({ channelTitle: 'Fornitore A', products, uniqueProducts: products }, mappings);
   assert.equal(analysis.missingSourceCategoryProducts, 3);
   assert.equal(analysis.importableProducts, 5);
-  assert.equal(analysis.withoutBaseCategoryProducts, 4);
-  assert.equal(analysis.unmappedValidCategoryProducts, 1);
+  assert.equal(analysis.withoutBaseCategoryProducts, 5);
+  assert.equal(analysis.unmappedValidCategoryProducts, 2);
   assert.equal(analysis.entries.length, 2);
   assert.deepEqual(analysis.missingProducts.map(product => product.id), ['1', '2', '3']);
 });

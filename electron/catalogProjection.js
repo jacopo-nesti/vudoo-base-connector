@@ -5,7 +5,7 @@ import { effectiveProduct, getProductOverride } from './effectiveProduct.js';
 import { toCatalogProductDto } from './catalogDto.js';
 import { resolveEffectiveBaseCategory } from '../src/categoryResolution.js';
 
-export function projectCatalogForOperator(catalog, mappings, overrides, companyCode, runtimeMappings = {}) {
+export function projectCatalogForOperator(catalog, mappings, overrides, companyCode, runtimeMappings = {}, categoryIndex) {
   let supplier = null;
   try { supplier = resolveSupplierProfile(catalog.channelTitle, mappings); } catch { /* Visible as pending. */ }
   const rows = catalog.products.map(source => {
@@ -23,9 +23,10 @@ export function projectCatalogForOperator(catalog, mappings, overrides, companyC
     const base = overridesForProduct.base ?? {};
     const globalProduct = effectiveProduct(canonical, overridesForProduct);
     const baseProduct = effectiveProduct(canonical, overridesForProduct, 'base');
-    const resolved = resolveEffectiveBaseCategory({ sourceTitle: catalog.channelTitle,
-      sourceCategory: source.product_type, canonicalCategory: globalProduct.canonical_category,
-      manualCategory: overridesForProduct.base_category, runtimeMappings, supplier, mappings });
+    const resolved = resolveEffectiveBaseCategory({ sourceTitle: catalog.catalogCode ?? catalog.channelTitle,
+      legacySourceTitle: catalog.channelTitle,
+      sourceCategory: source.product_type, manualCategory: overridesForProduct.base_category,
+      runtimeMappings, categoryIndex });
     baseProduct.category_id = resolved.categoryId;
     baseProduct.base_category_path = resolved.path;
     baseProduct.base_category_origin = resolved.origin;

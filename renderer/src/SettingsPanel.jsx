@@ -226,7 +226,8 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
     try {
       const response = await window.electronAPI.saveSettings(parsed.settings);
       if (!response?.ok) { setError(settingsError(response)); return; }
-      setSnapshot(response); setDraft(response.settings); onModeChanged?.(response.activeSettings.dryRun);
+      setSnapshot(response); setDraft(response.settings);
+      onModeChanged?.(response.activeSettings.dryRun, response.activeSettings.testMode);
       notifyOperation('settingsSaved');
       if (response.restartRequired) {
         setMessage('Impostazioni salvate. Riavvio necessario per applicare tutti i valori.');
@@ -245,7 +246,7 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, o
   if (loading) return <div className="card working" role="status"><span className="spinner" /> Caricamento impostazioni…</div>;
   if (!snapshot || !draft) return <div className="card"><p className="alert alert-danger" role="alert">{error}</p><button className="btn btn-secondary" type="button" onClick={() => { setLoading(true); setError(''); setRetryCount(value => value + 1); }}>Riprova</button></div>;
   const dirty = Object.keys(draft).some(key => String(draft[key]) !== String(snapshot.settings[key]));
-  const requiresRestart = Object.keys(snapshot.activeSettings).some(key => key !== 'dryRun' && String(draft[key]) !== String(snapshot.activeSettings[key]));
+  const requiresRestart = Object.keys(snapshot.activeSettings).some(key => !['dryRun', 'testMode'].includes(key) && String(draft[key]) !== String(snapshot.activeSettings[key]));
   return <section className="settings-panel" aria-label="Impostazioni Vudoo e Base.com">
     <nav className="settings-tabs" aria-label="Sezioni impostazioni">{tabs.map(([id, label]) =>
       <button type="button" key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => { setTab(id); setError(''); }}>{label}</button>)}</nav>

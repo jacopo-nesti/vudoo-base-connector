@@ -81,8 +81,8 @@ export async function runPreflightCheck(catalog) {
     tagPlans.push({ productId: product.id, ...plan,
       status: plan.wouldCreate.length ? plan.simulated ? 'TAG_SIMULATED_CREATE' : 'TAG_MISSING_WILL_CREATE' : 'TAG_EXISTING' });
   }
-  const globalCategoryIndex = uniqueProducts.some(product => product?.base_category_path?.length || product?.category_id)
-    ? await getGlobalCategoryIndex() : null;
+  const globalCategoryIndex = catalog?.globalCategoryIndex ?? (uniqueProducts.some(product =>
+    product?.base_category_path?.length || product?.category_id) ? await getGlobalCategoryIndex() : null);
   const categoryPlans = uniqueProducts.map(product => ({ productId: product.id,
     ...resolveProductGlobalCategory(product, globalCategoryIndex) }));
   for (const plan of new Map(categoryPlans.filter(plan =>

@@ -647,6 +647,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-primary)
 .base-category-dialog-content header p { margin: 4px 0 0; color: var(--color-text-secondary); }
 .base-category-results { max-height: 45vh; overflow: auto; border: 1px solid var(--color-border); border-radius: 8px; padding: 8px; }
 .base-category-line { display: flex; align-items: center; min-height: 34px; }
+.base-category-line:hover { background: var(--color-surface-hover, var(--color-primary-light)); border-radius: 6px; }
+.base-category-line--drop, .base-category-root-drop--active { outline: 2px solid var(--color-primary); background: var(--color-primary-light); border-radius: 6px; }
+.base-category-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 24px; min-height: 28px; flex: none; color: var(--color-text-secondary); cursor: grab; user-select: none; }
+.base-category-drag-handle:active { cursor: grabbing; }
+.base-category-root-drop { margin-top: 8px; padding: 10px 12px; border: 1px dashed var(--color-border); border-radius: 8px; color: var(--color-text-secondary); }
 .base-category-spacer { display: inline-block; width: 32px; flex: none; }
 .base-category-line > button:last-child { text-align: left; }
 .base-category-line > button[aria-pressed="true"], .base-category-result[aria-pressed="true"] { color: var(--color-primary-dark); background: var(--color-primary-light); }
@@ -656,6 +661,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--color-primary)
 .base-category-result small { white-space: nowrap; color: var(--color-text-secondary); }
 .base-category-breadcrumb { min-height: 22px; margin: 0; overflow-wrap: anywhere; }
 .base-category-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.base-categories-page { display: grid; gap: 12px; }
+.base-categories-layout { display: grid; grid-template-columns: minmax(280px, 1.2fr) minmax(260px, 1fr); gap: 16px; min-width: 0; }
+.base-categories-layout > .card { min-width: 0; }
+.base-categories-tree .base-category-results { max-height: min(65vh, 740px); }
+.base-categories-detail dl { display: grid; gap: 12px; overflow-wrap: anywhere; }
+.base-categories-detail dt { color: var(--color-text-secondary); font-size: 12px; }
+.base-categories-detail dd { margin: 3px 0 0; }
+@media (max-width: 850px) { .base-categories-layout { grid-template-columns: 1fr; } }
 .category-mapping-list { display: grid; gap: 6px; max-height: 320px; overflow: auto; }
 .category-mapping-row { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) auto auto; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }
 .category-mapping-row > div { display: grid; min-width: 0; }

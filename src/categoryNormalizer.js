@@ -160,7 +160,7 @@ export function normalizeCategory({ supplier, sourceCategory, mappings }) {
   };
 }
 
-export function analyzeCatalogCategories(catalog, mappings, runtimeMappings = {}) {
+export function analyzeCatalogCategories(catalog, mappings, runtimeMappings = {}, categoryIndex) {
   const counts = new Map();
   let missingSourceCategoryProducts = 0;
   for (const product of catalog.products) {
@@ -176,18 +176,17 @@ export function analyzeCatalogCategories(catalog, mappings, runtimeMappings = {}
   }
   let supplier;
   let supplierError;
-  try {
-    supplier = resolveSupplierProfile(catalog.channelTitle, mappings);
-  } catch (error) {
-    supplierError = error.message;
+  if (mappings.supplierByTitle?.size) {
+    try { supplier = resolveSupplierProfile(catalog.channelTitle, mappings); }
+    catch (error) { supplierError = error.message; }
   }
   const mapProduct = product => {
     const sourceCategory = product.product_type;
-    const resolved = resolveEffectiveBaseCategory({ sourceTitle: catalog.channelTitle,
-      sourceCategory, canonicalCategory: product.canonical_category,
-      manualCategory: product.base_category_override, runtimeMappings, supplier, mappings });
+    const resolved = resolveEffectiveBaseCategory({ sourceTitle: catalog.catalogCode ?? catalog.channelTitle,
+      legacySourceTitle: catalog.channelTitle,
+      sourceCategory, manualCategory: product.base_category_override, runtimeMappings, categoryIndex });
     return { ...product, source_category: sourceCategory,
-      canonical_category: resolved.canonicalCategory,
+      canonical_category: product.canonical_category ?? null,
       base_category_path: resolved.path,
       category_id: resolved.categoryId,
       base_category_origin: resolved.origin };
@@ -203,9 +202,9 @@ export function analyzeCatalogCategories(catalog, mappings, runtimeMappings = {}
   }
   const entries = [...counts.values()].map(entry => {
     const group = resolvedBySource.get(nameIdentity(entry.sourceCategory)) ?? [];
-    const paths = new Map(group.filter(product => product.base_category_path?.length)
+    const paths = new Map(group.filter(product => product.category_id > 0 && product.base_category_path?.length)
       .map(product => [JSON.stringify(product.base_category_path), product.base_category_path]));
-    const allMapped = group.length > 0 && group.every(product => product.base_category_path?.length);
+    const allMapped = group.length > 0 && group.every(product => product.category_id > 0);
     const status = allMapped ? paths.size === 1 ? 'mapped' : 'mixed'
       : paths.size ? 'partial' : 'unmapped';
     const canonicalIds = new Set(group.map(product => product.canonical_category).filter(Boolean));
@@ -213,7 +212,8 @@ export function analyzeCatalogCategories(catalog, mappings, runtimeMappings = {}
       canonicalCategory: canonicalIds.size === 1 ? [...canonicalIds][0] : null,
       basePath: paths.size === 1 ? [...paths.values()][0] : null };
   }).sort((left, right) => left.sourceCategory.localeCompare(right.sourceCategory, 'it', { sensitivity: 'base' }));
-  const isMapped = product => Array.isArray(product.base_category_path) && product.base_category_path.length > 0;
+  const isMapped = product => product.category_id > 0 &&
+    Array.isArray(product.base_category_path) && product.base_category_path.length > 0;
   const isMissing = product => isMissingSourceCategory(product.source_category);
   const mappedProducts = products.filter(isMapped);
   const unmappedProducts = products.filter(product => !isMapped(product) && !isMissing(product));
@@ -249,7 +249,7 @@ export function formatCategoryReport(analysis) {
   const lines = [
     '[CATEGORIE VUDOO]',
     '',
-    `Supplier: ${analysis.supplier?.id ?? 'NON CONFIGURATO'}`,
+    `Supplier legacy: ${analysis.supplier?.id ?? 'non richiesto dal flusso V2'}`,
     `Source title: ${analysis.channelTitle?.trim() || '(channel.title assente)'}`,
     `Configurazione: ${analysis.supplier?.file ?? '(non presente)'}`,
     '',

@@ -40,6 +40,6 @@ test('settings help is keyboard accessible and save still uses the existing sett
   assert.match(help, /onBlur=/);
   assert.match(help, /event\.key === 'Escape'/);
   assert.match(panel, /saveSettings\(parsed\.settings\)/);
-  assert.match(panel, /onModeChanged\?\.\(response\.activeSettings\.dryRun\)/);
+  assert.match(panel, /onModeChanged\?\.\(response\.activeSettings\.dryRun, response\.activeSettings\.testMode\)/);
   assert.match(panel, /Modifiche non salvate/);
 });

@@ -12,6 +12,12 @@ const readMethods = new Set([
   'getOrders', 'getOrderStatusList', 'getOrderSources',
 ]);
 let requestQueue = Promise.resolve();
+let connectionVerification = 'unverified';
+let lastConnectedAt = null;
+export function getBaseConnectionState() {
+  return { configured: Boolean(token), verification: token ? connectionVerification : 'unconfigured',
+    lastConnectedAt: token ? lastConnectedAt : null };
+}
 let nextRequestAt = 0;
 const requestTimes = [];
 const uncertainWrites = new Map();
@@ -50,8 +56,9 @@ function apiSetting(name, fallback, minimum, maximum) {
   return value;
 }
 
-function apiError(message, temporary = false, uncertain = false, retryAfterMs = 0) {
-  return Object.assign(new Error(message), { temporary, uncertain, retryAfterMs });
+function apiError(message, temporary = false, uncertain = false, retryAfterMs = 0,
+  connectionFailure = false) {
+  return Object.assign(new Error(message), { temporary, uncertain, retryAfterMs, connectionFailure });
 }
 
 function requestKey(method, parameters, body) {
@@ -86,27 +93,29 @@ async function requestBase(method, body, readOnly, rateLimitDelay) {
       signal: AbortSignal.timeout(30000),
     });
   } catch (error) {
-    throw apiError(`${method}: rete/timeout: ${error.message}`, true, !readOnly);
+    throw apiError(`${method}: rete/timeout: ${error.message}`, true, !readOnly, 0, true);
   }
   if (!response.ok) {
     const temporary = [408, 429, 500, 502, 503, 504].includes(response.status);
     const wait = Math.max(retryAfter(response), response.status === 429 ? rateLimitDelay : 0);
     throw apiError(`${method}: HTTP ${response.status}`, temporary,
-      !readOnly && (response.status === 408 || response.status >= 500), wait);
+      !readOnly && (response.status === 408 || response.status >= 500), wait,
+      response.status !== 429);
   }
   let data;
   try {
     data = await response.json();
   } catch {
-    throw apiError(`${method}: risposta JSON non leggibile`, true, !readOnly);
+    throw apiError(`${method}: risposta JSON non leggibile`, true, !readOnly, 0, true);
   }
   if (data?.status === 'ERROR') {
     const limited = data.error_code === 'ERROR_BLOCKED_TOKEN';
     throw apiError(`${method}: ${data.error_code ?? 'ERROR'} - ${data.error_message ?? 'Errore API'}`,
-      limited, false, limited ? Math.max(rateLimitDelay, retryAfter(response)) : 0);
+      limited, false, limited ? Math.max(rateLimitDelay, retryAfter(response)) : 0,
+      Boolean(data.error_code && /TOKEN|AUTH/i.test(data.error_code)));
   }
   if (data?.status !== 'SUCCESS') {
-    throw apiError(`${method}: risposta API non valida`, true, !readOnly);
+    throw apiError(`${method}: risposta API non valida`, true, !readOnly, 0, true);
   }
   return data;
 }
@@ -143,7 +152,14 @@ export async function callBase(method, parameters = {}) {
     }
   });
   requestQueue = run.catch(() => {});
-  return run;
+  return run.then(result => {
+    connectionVerification = 'connected';
+    lastConnectedAt = new Date().toISOString();
+    return result;
+  }, error => {
+    if (token && error.connectionFailure) connectionVerification = 'failed';
+    throw error;
+  });
 }
 
 export async function getBaseInventory(preferredInventoryId = null) {

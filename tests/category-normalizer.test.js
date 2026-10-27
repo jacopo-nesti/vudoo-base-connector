@@ -145,18 +145,18 @@ test('Categorie: report include tutte le categorie, conteggi e ordine alfabetico
   }, config);
   assert.equal(analysis.totalProducts, 5);
   assert.equal(analysis.entries.length, 4);
-  assert.equal(analysis.mappedCount, 2);
-  assert.equal(analysis.unmappedCount, 2);
+  assert.equal(analysis.mappedCount, 0);
+  assert.equal(analysis.unmappedCount, 4);
   assert.deepEqual(analysis.entries.map(entry => entry.sourceCategory), [
     'ACCESSORI REGALO', 'MAKE UP LIPS', 'PROFUMERIA', 'SPECIAL COLLECTION',
   ]);
   const report = formatCategoryReport(analysis);
-  assert.match(report, /MAPPATA: PROFUMERIA → FRAGRANCE → Bellezza e Salute > Profumi \(1 prodotti\)/);
+  assert.match(report, /NON MAPPATA: PROFUMERIA \(1 prodotti\)/);
   assert.match(report, /NON MAPPATA: SPECIAL COLLECTION \(2 prodotti\)/);
   assert.match(report, /NON MAPPATA: ACCESSORI REGALO \(1 prodotti\)/);
 });
 
-test('Categorie: prodotto mappato conserva source category e usa il Base path canonico', () => {
+test('Categorie V2: source category resta, canonical legacy non determina la categoria Base', () => {
   const config = mappings();
   const product = { product_type: 'PROFUMERIA', source: { product_type: 'PROFUMERIA' } };
   const analysis = analyzeCatalogCategories({
@@ -165,8 +165,8 @@ test('Categorie: prodotto mappato conserva source category e usa il Base path ca
     uniqueProducts: [product],
   }, config);
   assert.equal(analysis.products[0].source_category, 'PROFUMERIA');
-  assert.equal(analysis.products[0].canonical_category, 'FRAGRANCE');
-  assert.deepEqual(analysis.products[0].base_category_path, ['Bellezza e Salute', 'Profumi']);
+  assert.equal(analysis.products[0].canonical_category, null);
+  assert.equal(analysis.products[0].base_category_path, null);
   assert.equal(analysis.products[0].source.product_type, 'PROFUMERIA');
   assert.equal(analysis.products[0].product_type, 'PROFUMERIA');
 });

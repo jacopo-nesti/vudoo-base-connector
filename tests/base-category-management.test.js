@@ -26,15 +26,20 @@ const selected = { categoryId: 12, path: ['Base', 'Manuale'] };
 const runtime = { [categoryMappingKey('Stifflex', 'Fonte')]: {
   sourceTitle: 'Stifflex', sourceCategory: 'Fonte', categoryId: 11, path: ['Base', 'Utente'],
 } };
+const categoryIndex = buildGlobalCategoryIndex([
+  { category_id: 10, parent_id: 0, name: 'Base' },
+  { category_id: 11, parent_id: 10, name: 'Utente' },
+  { category_id: 12, parent_id: 10, name: 'Manuale' },
+]);
 
-test('categoria Base: prodotto > mapping utente > supplier/canonical > assente', () => {
-  const base = { sourceTitle: 'Stifflex', sourceCategory: 'Fonte', supplier, mappings };
+test('categoria Base V2: prodotto > mapping utente > assente, senza canonical', () => {
+  const base = { sourceTitle: 'Stifflex', sourceCategory: 'Fonte', supplier, mappings, categoryIndex };
   assert.deepEqual(resolveEffectiveBaseCategory({ ...base, manualCategory: selected, runtimeMappings: runtime }).path, selected.path);
   assert.equal(resolveEffectiveBaseCategory({ ...base, manualCategory: selected, runtimeMappings: runtime }).origin, 'product_override');
   assert.equal(resolveEffectiveBaseCategory({ ...base, runtimeMappings: runtime }).categoryId, 11);
-  assert.equal(resolveEffectiveBaseCategory(base).origin, 'supplier_mapping');
+  assert.equal(resolveEffectiveBaseCategory(base).origin, 'unresolved');
   assert.equal(resolveEffectiveBaseCategory({ ...base, sourceCategory: 'Sconosciuta' }).origin, 'unresolved');
-  assert.deepEqual(resolveEffectiveBaseCategory({ ...base, canonicalCategory: 'STATIC' }).path, ['Base', 'Statica']);
+  assert.equal(resolveEffectiveBaseCategory({ ...base, canonicalCategory: 'STATIC' }).categoryId, null);
 });
 
 test('scoped supplier: Mazzuoli non coinvolto invalido non blocca Stifflex; globale lo segnala', async () => {
@@ -67,7 +72,8 @@ test('categoria Base: ricerca/path distinguono nomi omonimi e ID verificato', ()
     ['Cancelleria > Penne', 'Moda > Penne']);
   assert.equal(searchBaseCategories(index.entries, '4')[0].categoryId, 4);
   assert.equal(resolveProductGlobalCategory({ category_id: 2, base_category_path: ['Cancelleria', 'Penne'] }, index).categoryId, 2);
-  assert.equal(resolveProductGlobalCategory({ category_id: 2, base_category_path: ['Moda', 'Penne'] }, index).categoryId, null);
+  assert.deepEqual(resolveProductGlobalCategory({ category_id: 2, base_category_path: ['Moda', 'Penne'] }, index).path,
+    ['Cancelleria', 'Penne']);
 });
 
 test('Product Manager filtra le categorie Base assegnate e conserva il filtro nelle viste', () => {
@@ -87,7 +93,7 @@ test('proiezione catalogo usa mapping per tutti i prodotti e override solo sul p
   } };
   const overrides = { [productKey('390296', '389578')]: { base_category: selected } };
   const projection = projectCatalogForOperator(catalog, validateCategoryMappings(categoryMappings),
-    overrides, '390296', runtimeMappings);
+    overrides, '390296', runtimeMappings, categoryIndex);
   assert.deepEqual(projection.rows.map(row => row.baseCategory.origin), ['product_override', 'runtime_mapping']);
   assert.deepEqual(projection.rows.map(row => row.baseCategory.categoryId), [12, 11]);
   assert.equal(projection.rows[0].basePreflight.checks.find(check => check.code === 'category').status, 'PASS');
@@ -95,11 +101,26 @@ test('proiezione catalogo usa mapping per tutti i prodotti e override solo sul p
   assert.deepEqual(catalog.products.map(product => product.product_type), [sourceCategory, sourceCategory]);
 });
 
+test('mapping V2 usa codice catalogo e resta visibile nella proiezione del singolo prodotto', () => {
+  const catalog = parseCatalog(catalogXml(itemXml));
+  catalog.catalogCode = '390296';
+  const sourceCategory = catalog.products[0].product_type;
+  const mapping = { [categoryMappingKey('390296', sourceCategory)]: {
+    sourceTitle: '390296', sourceCategory, categoryId: 11, path: ['Base', 'Utente'],
+  } };
+  const index = buildGlobalCategoryIndex([{ category_id: 10, parent_id: 0, name: 'Base' },
+    { category_id: 11, parent_id: 10, name: 'Utente' }]);
+  const projection = projectCatalogForOperator(catalog, mappings, {}, '390296', mapping, index);
+  assert.equal(projection.rows[0].baseCategory.categoryId, 11);
+  assert.equal(projection.rows[0].baseCategory.origin, 'runtime_mapping');
+  assert.equal(projection.rows[0].basePreflight.checks.find(check => check.code === 'category').status, 'PASS');
+});
+
 test('preflight aggregato distingue assegnazioni manuali diverse sulla stessa categoria Vudoo', () => {
   const products = [{ id: 'A', product_type: 'Fonte', base_category_override: selected },
     { id: 'B', product_type: 'Fonte' }];
   const analysis = analyzeCatalogCategories({ channelTitle: 'Stifflex', products,
-    uniqueProducts: products }, mappings, runtime);
+    uniqueProducts: products }, mappings, runtime, categoryIndex);
   assert.equal(analysis.entries[0].status, 'mixed');
   assert.equal(analysis.mappedCount, 1);
   assert.equal(analysis.withoutBaseCategoryProducts, 0);

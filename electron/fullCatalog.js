@@ -10,10 +10,11 @@ function requireCatalog(activeCatalog) {
   return activeCatalog;
 }
 
-export async function preflightFullCatalog(activeCatalog, overrides = {}, companyCode, runtimeMappings = {}) {
+export async function preflightFullCatalog(activeCatalog, overrides = {}, companyCode,
+  runtimeMappings = {}, onCategoryIndex) {
   const startedAt = Date.now();
   const prepared = prepareEffectiveFullCatalog(requireCatalog(activeCatalog), overrides, companyCode, undefined, runtimeMappings);
-  return { ...toPreflightResult(await preflightPreparedVudooCatalog(prepared)),
+  return { ...toPreflightResult(await preflightPreparedVudooCatalog(prepared, { onCategoryIndex })),
     durationMs: Math.max(0, Date.now() - startedAt) };
 }
 

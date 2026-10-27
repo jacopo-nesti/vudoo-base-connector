@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   fetchCatalog: (companyCode) =>
     ipcRenderer.invoke("catalog:fetch", companyCode),
   getBaseCategories: () => ipcRenderer.invoke('categories:list'),
+  ensureBaseCategories: () => ipcRenderer.invoke('categories:ensure'),
+  mutateBaseCategory: (operation, input) => ipcRenderer.invoke('categories:mutate', operation, input),
+  getBaseCategoryDeleteImpact: (categoryId) => ipcRenderer.invoke('categories:delete-impact', categoryId),
   listCategoryMappings: () => ipcRenderer.invoke('categories:mappings-list'),
   saveCategoryMapping: (input) => ipcRenderer.invoke('categories:mapping-save', input),
   removeCategoryMapping: (input) => ipcRenderer.invoke('categories:mapping-remove', input),

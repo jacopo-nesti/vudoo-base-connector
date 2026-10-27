@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import InventoryStatus from '../components/InventoryStatus.jsx';
-import { baseConnectionView, connectionResultFromChecks } from '../baseConnectionView.js';
+import { baseConnectionView } from '../baseConnectionView.js';
 
 const labels = {
   BASE_API_TOKEN: 'Credenziali Base.com', TEST_MODE: 'Modalità test', DRY_RUN: 'Modalità simulazione',
@@ -9,22 +9,30 @@ const labels = {
   'Rate limiter Base.com': 'Limite richieste',
 };
 
-export default function BaseDiagnosticsPage({ catalog, catalogCode, dryRunMode, baseConfigured }) {
+export default function BaseDiagnosticsPage({ catalog, catalogCode, dryRunMode, baseConfigured,
+  baseConnection, onConnectionChanged }) {
   const [checks, setChecks] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [connectionResult, setConnectionResult] = useState(undefined);
   const inventoryId = catalog?.inventoryStatus?.inventoryId ?? catalog?.baseInventoryId;
-  const baseState = baseConnectionView(baseConfigured, connectionResult);
+  const baseState = baseConnectionView(baseConnection?.configured ?? baseConfigured,
+    baseConnection?.verification);
+  useEffect(() => {
+    let active = true;
+    window.electronAPI.getRuntimeMode().then(mode => {
+      if (active && mode?.baseConnection) onConnectionChanged?.(mode.baseConnection);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   async function verify() {
-    setBusy(true); setError(''); setChecks(null); setConnectionResult(undefined);
+    setBusy(true); setError(''); setChecks(null);
     try {
       const response = await window.electronAPI.checkEnvironment();
       if (!Array.isArray(response?.checks)) throw new Error();
-      setConnectionResult(connectionResultFromChecks(response.checks));
+      if (response.baseConnection) onConnectionChanged?.(response.baseConnection);
       setChecks(response.checks.map(check => ({ label: labels[check.title] ?? check.title,
         status: check.ok ? 'pass' : 'issue', detail: check.details })));
-    } catch { setConnectionResult(false); setError('Diagnostica Base.com non riuscita. Riprova.'); }
+    } catch { setError('Diagnostica Base.com non riuscita. Riprova.'); }
     finally { setBusy(false); }
   }
   return <div className="page-stack"><div className="page-heading"><div><h1>Diagnostica Base.com</h1><p>Controlla la configurazione e il collegamento Base.com.</p></div></div>

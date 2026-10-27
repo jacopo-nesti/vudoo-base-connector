@@ -10,7 +10,8 @@ const symbols = { PASS: '✓', WARNING: '⚠', BLOCKING: '✕' };
 const display = value => Array.isArray(value) ? value.join('\n') : value == null ? '' : String(value);
 const fieldId = key => `field-${key.replace(/[^a-z0-9]/gi, '-')}`;
 
-export default function ProductDetailsDialog({ product, onClose, onSave, onSaveCategory, onMediaChange, canonicalOptions = [], initialSection = 'Identità' }) {
+export default function ProductDetailsDialog({ product, onClose, onSave, onSaveCategory, onMediaChange,
+  onCategoryTreeLoaded, canonicalOptions = [], initialSection = 'Identità' }) {
   const dialogRef = useRef(null);
   const [section, setSection] = useState('Identità');
   const [draft, setDraft] = useState({});
@@ -22,8 +23,11 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onSaveC
   const [preview, setPreview] = useState(null);
   const [categorySelectorOpen, setCategorySelectorOpen] = useState(false);
   const [saveAsMapping, setSaveAsMapping] = useState(false);
+  const [categoryLoading, setCategoryLoading] = useState(false);
+  const [categoryLoadError, setCategoryLoadError] = useState('');
   const dirty = Object.keys(draft).length > 0 || resets.length > 0;
-  const fields = section === 'Base.com' ? BASE_OVERRIDE_FIELDS : PRODUCT_FIELDS.filter(field => field.section === section);
+  const fields = section === 'Base.com' ? BASE_OVERRIDE_FIELDS : PRODUCT_FIELDS.filter(field =>
+    field.section === section && field.key !== 'canonical_category');
 
   useEffect(() => {
     if (!product) return undefined;
@@ -38,6 +42,18 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onSaveC
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [product, dirty]);
+  useEffect(() => {
+    if (!product || section !== 'Classificazione') return undefined;
+    let active = true;
+    setCategoryLoading(true); setCategoryLoadError('');
+    window.electronAPI.ensureBaseCategories().then(response => {
+      if (!active) return;
+      if (!response?.ok) throw new Error(response?.error || 'Categorie Base.com non disponibili.');
+      onCategoryTreeLoaded?.(response);
+    }).catch(error => { if (active) setCategoryLoadError(error?.message || 'Categorie Base.com non disponibili.'); })
+      .finally(() => { if (active) setCategoryLoading(false); });
+    return () => { active = false; };
+  }, [product?.id, section]);
   if (!product) return null;
 
   function valueFor(field) {
@@ -159,14 +175,27 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onSaveC
         })}</div>
         {section === 'Media' && <ManualImageEditor key={product.id} product={product} onProductChange={onMediaChange} />}
         {section === 'Classificazione' && <section className="base-category-detail"><h3>Categoria Base.com</h3>
+          {categoryLoading && <p role="status">Caricamento categorie Base.com…</p>}
+          {categoryLoadError && <p className="alert alert-warning" role="alert">{categoryLoadError}
+            <button className="btn btn-secondary btn-sm" type="button" onClick={() => setCategorySelectorOpen(true)}>Riprova</button></p>}
           <dl><div><dt>Categoria Vudoo originale</dt><dd>{product.sourceCategory || 'Non disponibile'}</dd></div>
-            <div><dt>Categoria canonica</dt><dd>{product.canonicalCategory || 'Non risolta'}</dd></div>
             <div><dt>Categoria Base.com effettiva</dt><dd>{product.baseCategory?.path?.join(' › ') || 'Non assegnata'}</dd></div>
-            <div><dt>Origine</dt><dd>{{ product_override: 'Override prodotto', runtime_mapping: 'Mapping utente', supplier_mapping: 'Mapping supplier', canonical: 'Canonical', unresolved: 'Non risolta' }[product.baseCategory?.origin] || 'Non risolta'}</dd></div></dl>
-          {!product.baseCategory?.path?.length && <p className="alert alert-warning">Categoria Base.com non assegnata: il prodotto resta importabile senza category_id.</p>}
+            <div><dt>ID Base.com</dt><dd>{product.baseCategory?.categoryId ??
+              (product.baseCategory?.invalidCategoryId ? `${product.baseCategory.invalidCategoryId} · non disponibile` : 'Non assegnata')}</dd></div>
+            <div><dt>Origine</dt><dd>{{ product_override: 'Override prodotto', runtime_mapping: 'Mapping utente',
+              deleted_category: 'Categoria Base.com eliminata', unverified_category: 'Categoria da verificare',
+              unresolved: 'Non assegnata' }[product.baseCategory?.origin] || 'Non assegnata'}</dd></div></dl>
+          {!product.baseCategory?.path?.length && <p className="alert alert-warning">{product.baseCategory?.origin === 'unverified_category'
+            ? 'Categoria Base.com non verificata: aggiorna le categorie e riprova.'
+            : product.baseCategory?.origin === 'deleted_category'
+            ? product.baseCategory?.invalidOrigin === 'runtime_mapping'
+              ? 'Categoria del mapping non esiste più su Base.com: scegli un override o correggi il mapping in Impostazioni.'
+              : 'Categoria selezionata non esiste più su Base.com: scegli una nuova categoria o ripristina.'
+            : 'Categoria Base.com non assegnata: il prodotto resta importabile senza category_id.'}</p>}
           <label className="base-category-mapping-choice"><input type="checkbox" checked={saveAsMapping} disabled={!product.sourceCategory?.trim() || saving} onChange={event => setSaveAsMapping(event.target.checked)} /> Usa questa categoria anche per prodotti futuri con questa categoria Vudoo</label>
           <div className="selection-actions"><button className="btn btn-secondary" type="button" disabled={saving || dirty} onClick={() => setCategorySelectorOpen(true)}>Cambia categoria Base.com</button>
-            {product.baseCategory?.origin === 'product_override' && <button className="btn btn-quiet" type="button" disabled={saving || dirty} onClick={() => saveCategory(null)}>Ripristina categoria automatica</button>}</div>
+            {(product.baseCategory?.origin === 'product_override' || product.baseCategory?.origin === 'deleted_category' &&
+              product.baseCategory?.invalidOrigin === 'product_override') && <button className="btn btn-quiet" type="button" disabled={saving || dirty} onClick={() => saveCategory(null)}>Ripristina categoria automatica</button>}</div>
           <small className="muted">La selezione salva solo dati locali. Nessuna modifica viene inviata subito a Base.com.</small>
         </section>}
         {section === 'Base.com' && <section className="base-preview-panel"><h3>Perché non posso inviarlo?</h3>

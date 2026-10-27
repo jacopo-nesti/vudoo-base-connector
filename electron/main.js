@@ -16,6 +16,8 @@ import {
 } from './productOverrides.js';
 import { CATEGORY_MAPPINGS_FILE_NAME, categoryMappingKey, loadRuntimeCategoryMappings,
   saveRuntimeCategoryMapping, removeRuntimeCategoryMapping } from './categoryMappingStore.js';
+import { createBaseCategoryService } from './baseCategoryService.js';
+import { createBaseCategoryCache } from './baseCategoryCache.js';
 import { getProductOverride } from './effectiveProduct.js';
 import { basePayloadPreview, assertBaseLocalSendable } from '../src/marketplaces/base/localPreview.js';
 import { validateBulkBaseInput } from '../src/productSchema.js';
@@ -67,6 +69,13 @@ async function bootstrap() {
 
   applySettingsToEnvironment(activeSettings);
 
+  // Static Electron imports may have loaded src/config before the external .env.
+  // Initialize its live bindings once, independently of the Diagnostics page.
+  const baseConfig = await import('../src/config.js');
+  baseConfig.refreshBaseToken();
+  baseConfig.setDryRunMode(activeSettings.dryRun);
+  baseConfig.setTestMode(activeSettings.testMode);
+
   // This module imports core config transitively; wait for saved settings.
   const { projectCatalogForOperator } = await import('./catalogProjection.js');
 
@@ -76,17 +85,15 @@ async function bootstrap() {
   const { fetchParsedVudooCatalog } =
     await import("../src/vudooImport.js");
   const { loadCategoryMappings } = await import('../src/categoryNormalizer.js');
-  const { getGlobalCategoryIndex, resolveGlobalCategoryId } = await import('../src/categories.js');
+  const { buildGlobalCategoryIndex, resolveGlobalCategoryId } = await import('../src/categories.js');
 
   const { BULK_LOOKUP_THRESHOLD } = await import("../src/importer.js");
   const { BASE_PRODUCT_DETAILS_CHUNK_SIZE } = await import("../src/baseApi.js");
-  const { callBase, findProductInBase, getBaseProductDetails } = await import('../src/baseApi.js');
+  const { callBase, findProductInBase, getBaseProductDetails, getBaseConnectionState } = await import('../src/baseApi.js');
   const { readBaseOrder, classifyOrderError } = await import('../src/orders/baseOrderReader.js');
   const { syncOrders } = await import('../src/orders/orderSync.js');
   const { createInventoryTagService } = await import('../src/inventoryTags.js');
-  const baseConfig = await import('../src/config.js');
-
-  const { setDryRunMode, testMode, token, getBaseApiRequestsPerMinute } =
+  const { setDryRunMode, setTestMode, testMode, token, getBaseApiRequestsPerMinute } =
     await import("../src/config.js");
 
   const { redactToken } =
@@ -110,6 +117,8 @@ async function bootstrap() {
   const productOverridesPath = path.join(app.getPath('userData'), PRODUCT_OVERRIDES_FILE_NAME);
   const categoryMappingsPath = path.join(app.getPath('userData'), CATEGORY_MAPPINGS_FILE_NAME);
   let activeRuntimeMappings = {};
+  let activeCategoryIndex = null;
+  let activeMappingError = null;
   let runtimeMappingsError = null;
   try { activeRuntimeMappings = await loadRuntimeCategoryMappings(categoryMappingsPath); }
   catch (error) { runtimeMappingsError = redactToken(error?.message ?? error); }
@@ -129,6 +138,32 @@ async function bootstrap() {
   }
   app.on('before-quit', () => { manufacturerDirectory?.close(); orderStore?.close(); });
   const writeGuard = createWriteGuard();
+  const categoryService = createBaseCategoryService({ request: callBase,
+    isSimulation: () => baseConfig.dryRun === 'true' });
+  const categoryCache = createBaseCategoryCache({ read: () => categoryService.read(),
+    buildIndex: buildGlobalCategoryIndex });
+  function rememberCategories(rows) {
+    const state = categoryCache.replace(rows);
+    activeCategoryIndex = state.index;
+    const projection = activeCatalog ? projectCatalogForOperator(activeCatalog, activeMappings,
+      activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex) : null;
+    return { categories: state.categories, categoriesLoaded: state.categoriesLoaded,
+      categoriesVerified: state.categoriesVerified, lastCategoriesRefresh: state.lastCategoriesRefresh,
+      products: projection?.rows ?? null, quality: projection?.quality ?? null,
+      mappingError: [activeMappingError, runtimeMappingsError].filter(Boolean).join(' ') || null,
+      baseConnection: getBaseConnectionState() };
+  }
+  async function ensureCategories(force = false) {
+    const state = await categoryCache.ensure({ force });
+    activeCategoryIndex = state.index;
+    const projection = activeCatalog ? projectCatalogForOperator(activeCatalog, activeMappings,
+      activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex) : null;
+    return { categories: state.categories, categoriesLoaded: true, categoriesVerified: true,
+      lastCategoriesRefresh: state.lastCategoriesRefresh, products: projection?.rows ?? null,
+      quality: projection?.quality ?? null,
+      mappingError: [activeMappingError, runtimeMappingsError].filter(Boolean).join(' ') || null,
+      baseConnection: getBaseConnectionState() };
+  }
   let inventoryService = null;
   function getInventoryService() {
     inventoryService ??= createManufacturerInventoryService({
@@ -182,8 +217,8 @@ async function bootstrap() {
       settings,
       activeSettings: { ...activeSettings },
       hasOverrides: Object.keys(savedSettings).length > 0,
-      restartRequired: Object.keys(settings).some(key => key !== 'dryRun' && settings[key] !== activeSettings[key]) ||
-        (environmentWarnings.some(key => key !== 'DRY_RUN') &&
+      restartRequired: Object.keys(settings).some(key => !['dryRun', 'testMode'].includes(key) && settings[key] !== activeSettings[key]) ||
+        (environmentWarnings.some(key => !['DRY_RUN', 'TEST_MODE'].includes(key)) &&
           JSON.stringify(savedSettings) !== JSON.stringify(startupSavedSettings)),
       warning: settingsWarning,
       environmentWarnings,
@@ -289,8 +324,11 @@ async function bootstrap() {
       try {
         return await writeGuard.run(async () => {
           savedSettings = await saveSettings(settingsPath, input);
-          setDryRunMode(getEffectiveSettings(baseSettings, savedSettings).dryRun);
-          activeSettings.dryRun = savedSettings.dryRun ?? baseSettings.dryRun;
+          const effective = getEffectiveSettings(baseSettings, savedSettings);
+          setDryRunMode(effective.dryRun);
+          setTestMode(effective.testMode);
+          activeSettings.dryRun = effective.dryRun;
+          activeSettings.testMode = effective.testMode;
           settingsWarning = null;
           return settingsResponse();
         });
@@ -305,7 +343,9 @@ async function bootstrap() {
           await resetSettings(settingsPath);
           savedSettings = {};
           setDryRunMode(baseSettings.dryRun);
+          setTestMode(baseSettings.testMode);
           activeSettings.dryRun = baseSettings.dryRun;
+          activeSettings.testMode = baseSettings.testMode;
           settingsWarning = null;
           return settingsResponse();
         });
@@ -324,13 +364,12 @@ async function bootstrap() {
     });
 
     ipcMain.handle("environment:check", async () => {
-      loadLocalEnvironment(environmentFile, { optional: app.isPackaged });
-      const { refreshBaseToken } = await import('../src/config.js');
-      refreshBaseToken();
-      return await runEnvironmentCheck();
+      const result = await runEnvironmentCheck();
+      return { ...result, baseConnection: getBaseConnectionState() };
     });
     ipcMain.handle("app:runtime-mode", () => ({
-      baseConfigured: Boolean(token),
+      baseConfigured: getBaseConnectionState().configured,
+      baseConnection: getBaseConnectionState(),
       dryRun: activeSettings.dryRun,
       testMode: testMode === "true" ? true : testMode === "false" ? false : null,
       baseApiRequestsPerMinute: getBaseApiRequestsPerMinute(),
@@ -373,16 +412,22 @@ async function bootstrap() {
       activeInventoryStatus = null;
       const startedAt = Date.now();
       activeCatalog = await fetchParsedVudooCatalog(normalizedCompanyCode);
+      activeCatalog.catalogCode = normalizedCompanyCode;
       activeCompanyCode = normalizedCompanyCode;
       activeOverrides = storedOverrides;
       if (storedRuntimeMappings) activeRuntimeMappings = storedRuntimeMappings;
+      let categorySyncWarning = null;
+      try { activeCategoryIndex = (await categoryCache.ensure()).index; }
+      catch { activeCategoryIndex = null;
+        categorySyncWarning = 'Categorie Base.com non disponibili. Riprova dalla pagina Prodotti o Categorie.'; }
       let mappingError = null;
       try { activeMappings = await loadCategoryMappings(undefined, { channelTitle: activeCatalog.channelTitle }); }
       catch (error) {
         activeMappings = { canonical: new Map(), suppliers: new Map(), supplierByTitle: new Map() };
         mappingError = redactToken(error.message);
       }
-      const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings);
+      activeMappingError = mappingError;
+      const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex);
 
       let directoryResult;
       activeCatalogLoadedAt = new Date().toISOString();
@@ -403,6 +448,8 @@ async function bootstrap() {
         products: projection.rows,
         quality: projection.quality,
         mappingError: [mappingError, runtimeMappingsError].filter(Boolean).join(' ') || null,
+        categoryError: categorySyncWarning,
+        baseConnection: getBaseConnectionState(),
         canonicalOptions: [...activeMappings.canonical.keys()].sort(),
       };
     });
@@ -414,27 +461,60 @@ async function bootstrap() {
       if (matches.some(product => JSON.stringify(product) !== JSON.stringify(source))) {
         throw new Error('ID duplicato con dati supplier discordanti: correggere il feed prima di modificare.');
       }
-      return { source, product: projectCatalogForOperator({ channelTitle: activeCatalog.channelTitle, products: [source] },
-        activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings).rows[0] };
+      return { source, product: projectCatalogForOperator({ channelTitle: activeCatalog.channelTitle,
+        catalogCode: activeCompanyCode, products: [source] },
+        activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex).rows[0] };
     }
 
     async function verifiedGlobalCategory(categoryId) {
-      const index = await getGlobalCategoryIndex();
-      const category = resolveGlobalCategoryId(categoryId, index);
-      if (!category) throw new Error('Categoria Base.com non trovata o percorso ambiguo. Aggiorna le categorie.');
+      const state = await categoryCache.ensure({ force: true });
+      activeCategoryIndex = state.index;
+      const category = resolveGlobalCategoryId(categoryId, state.index);
+      if (!category) throw new Error('Categoria Base.com non trovata. Aggiorna le categorie.');
       return category;
     }
 
     ipcMain.handle('categories:list', async () => {
       try {
-        const index = await getGlobalCategoryIndex();
-        return { ok: true, categories: index.entries.map(entry => ({ categoryId: entry.categoryId,
-          parentId: entry.parentId, name: entry.name, path: entry.path })) };
+        return { ok: true, ...await ensureCategories(true) };
       } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
     });
-    ipcMain.handle('categories:mappings-list', () => runtimeMappingsError
-      ? { ok: false, error: runtimeMappingsError }
-      : { ok: true, mappings: Object.values(activeRuntimeMappings) });
+    ipcMain.handle('categories:ensure', async () => {
+      try { return { ok: true, ...await ensureCategories() }; }
+      catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
+    });
+    ipcMain.handle('categories:mutate', async (_event, operation, input) => {
+      try {
+        return await writeGuard.run(async () => {
+          const result = await categoryService.mutate(operation, input);
+          return { ok: true, simulated: result.simulated, categoryId: result.categoryId ?? null,
+            ...rememberCategories(result.categories) };
+        });
+      } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
+    });
+    ipcMain.handle('categories:delete-impact', async (_event, categoryId) => {
+      try { return { ok: true, impact: await categoryService.deleteImpact(categoryId) }; }
+      catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
+    });
+    function mappingRows() {
+      return Object.values(activeRuntimeMappings).map(mapping => {
+        const entry = activeCategoryIndex?.byId.get(mapping.categoryId);
+        return { ...mapping, path: entry?.path ?? mapping.path,
+          valid: activeCategoryIndex ? Boolean(entry) : null };
+      });
+    }
+    ipcMain.handle('categories:mappings-list', async () => {
+      if (runtimeMappingsError) return { ok: false, error: runtimeMappingsError };
+      try {
+        const state = await ensureCategories();
+        return { ok: true, ...state, mappings: mappingRows() };
+      }
+      catch (error) {
+        activeCategoryIndex = null;
+        return { ok: true, mappings: mappingRows(),
+          categoryError: redactToken(error?.message ?? error) };
+      }
+    });
     ipcMain.handle('categories:mapping-save', async (_event, input) => {
       try {
         return await writeGuard.run(async () => {
@@ -447,8 +527,8 @@ async function bootstrap() {
           activeRuntimeMappings = await saveRuntimeCategoryMapping(categoryMappingsPath,
             activeRuntimeMappings, input.sourceTitle, input.sourceCategory, category);
           const projection = activeCatalog ? projectCatalogForOperator(activeCatalog, activeMappings,
-            activeOverrides, activeCompanyCode, activeRuntimeMappings) : null;
-          return { ok: true, mappings: Object.values(activeRuntimeMappings),
+            activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex) : null;
+          return { ok: true, mappings: mappingRows(),
             products: projection?.rows ?? null, quality: projection?.quality ?? null };
         });
       } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
@@ -462,8 +542,8 @@ async function bootstrap() {
           activeRuntimeMappings = await removeRuntimeCategoryMapping(categoryMappingsPath,
             activeRuntimeMappings, input?.sourceTitle, input?.sourceCategory);
           const projection = activeCatalog ? projectCatalogForOperator(activeCatalog, activeMappings,
-            activeOverrides, activeCompanyCode, activeRuntimeMappings) : null;
-          return { ok: true, mappings: Object.values(activeRuntimeMappings),
+            activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex) : null;
+          return { ok: true, mappings: mappingRows(),
             products: projection?.rows ?? null, quality: projection?.quality ?? null };
         });
       } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
@@ -485,11 +565,11 @@ async function bootstrap() {
           let mappingWarning = null;
           if (input.saveAsMapping) {
             try { activeRuntimeMappings = await saveRuntimeCategoryMapping(categoryMappingsPath,
-              activeRuntimeMappings, activeCatalog.channelTitle, sources[0].product_type, category); }
+              activeRuntimeMappings, activeCompanyCode, sources[0].product_type, category); }
             catch { mappingWarning = 'Override salvato; mapping riutilizzabile non salvato. Riprova da Impostazioni.'; }
           }
           const projection = projectCatalogForOperator(activeCatalog, activeMappings,
-            activeOverrides, activeCompanyCode, activeRuntimeMappings);
+            activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex);
           return { ok: true, warning: mappingWarning, products: projection.rows, quality: projection.quality };
         });
       } catch (error) { return { ok: false, error: redactToken(error?.message ?? error) }; }
@@ -663,8 +743,11 @@ async function bootstrap() {
     ipcMain.handle("catalog:preflight-selected", async (_event, selectedIds) => {
       try {
         await refreshActiveInventory();
-        return { ok: true, result: await preflightSelectedCatalog(activeCatalog, selectedIds,
-          activeOverrides, activeCompanyCode, activeRuntimeMappings), inventoryStatus: activeInventoryStatus };
+        let categoryState = null;
+        const result = await preflightSelectedCatalog(activeCatalog, selectedIds,
+          activeOverrides, activeCompanyCode, activeRuntimeMappings,
+          index => { categoryState = rememberCategories(index.entries); });
+        return { ok: true, result, categoryState, inventoryStatus: activeInventoryStatus };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }
@@ -673,7 +756,7 @@ async function bootstrap() {
     ipcMain.handle("catalog:import-selected", async (_event, selectedIds) => {
       await refreshActiveInventory();
       const response = await runWriteOperation(() => {
-        const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings);
+        const projection = projectCatalogForOperator(activeCatalog, activeMappings, activeOverrides, activeCompanyCode, activeRuntimeMappings, activeCategoryIndex);
         assertBaseLocalSendable(projection.rows, selectedIds);
         return importSelectedCatalog(activeCatalog, selectedIds, activeOverrides, activeCompanyCode, importMediaHooks(), activeRuntimeMappings);
       });
@@ -683,8 +766,11 @@ async function bootstrap() {
     ipcMain.handle("catalog:preflight-all", async () => {
       try {
         await refreshActiveInventory();
-        return { ok: true, result: await preflightFullCatalog(activeCatalog,
-          activeOverrides, activeCompanyCode, activeRuntimeMappings), inventoryStatus: activeInventoryStatus };
+        let categoryState = null;
+        const result = await preflightFullCatalog(activeCatalog,
+          activeOverrides, activeCompanyCode, activeRuntimeMappings,
+          index => { categoryState = rememberCategories(index.entries); });
+        return { ok: true, result, categoryState, inventoryStatus: activeInventoryStatus };
       } catch (error) {
         return { ok: false, error: redactToken(error?.message ?? error) };
       }

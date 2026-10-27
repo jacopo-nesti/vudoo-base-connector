@@ -9,6 +9,7 @@ import ManufacturersPage from './pages/ManufacturersPage.jsx';
 import OperationsPage from './pages/OperationsPage.jsx';
 import BaseDiagnosticsPage from './pages/BaseDiagnosticsPage.jsx';
 import OrdersBetaPage from './pages/OrdersBetaPage.jsx';
+import BaseCategoriesPage from './pages/BaseCategoriesPage.jsx';
 import SystemDiagnostics from './pages/SystemDiagnostics.jsx';
 import ProblemsPage from './pages/ProblemsPage.jsx';
 import SettingsPanel from './SettingsPanel.jsx';
@@ -53,7 +54,7 @@ export default function AppPresentation({ model: app }) {
     updateSelection(clearSelectedIds(selectedIds));
   }
 
-  const basePages = ['base-overview', 'base-manufacturers', 'base-catalog', 'base-operations', 'base-diagnostics', 'base-settings', 'preflight', 'confirmation', 'result'];
+  const basePages = ['base-overview', 'base-manufacturers', 'base-catalog', 'base-operations', 'base-categories', 'base-diagnostics', 'base-settings', 'preflight', 'confirmation', 'result'];
   return <AppShell page={page} onNavigate={navigate} supplier={catalog?.manufacturerName || catalog?.channelTitle} dryRunMode={app.dryRunMode} onSetOperatingMode={app.handleSetOperatingMode} app={app} onCatalog={() => setCatalogSwitcherOpen(true)}>
     <CatalogSwitcher open={catalogSwitcherOpen} app={app} onClose={() => setCatalogSwitcherOpen(false)} />
     <SaveManufacturerDialog catalogCode={app.pendingManufacturerCode} onSave={app.handleSaveManufacturer} onClose={() => app.setPendingManufacturerCode(null)} />
@@ -89,13 +90,16 @@ export default function AppPresentation({ model: app }) {
       onUndo: app.undoLastSelectionChange, canUndo: app.previousSelectedIds !== null,
       onPreflightSelected: app.handlePreflightSelected, preflightLoading: app.preflightLoading,
       onSaveProduct: app.handleSaveProductFields, onSaveCategory: app.handleSaveProductCategory,
+      onCategoriesLoaded: app.handleCategoryMappingsChanged, onRetryCategories: app.handleRetryCategories,
       onMediaChange: app.handleLocalMediaChanged,
       onBulkEditProducts: app.handleBulkEditProducts,
       onSelectInventory: app.handleSelectInventory, onRetryInventory: app.handleRetryInventory,
     }} />}
     {page === 'base-operations' && <OperationsPage catalog={catalog} selectedCount={selectedIds.length} catalogBusy={catalogBusy} dryRunMode={app.dryRunMode} fullPreflightLoading={app.fullPreflightLoading} preflightLoading={app.preflightLoading} manufacturerSyncLoading={manufacturerSyncLoading} manufacturerSyncError={app.manufacturerSyncError} manufacturerSyncResult={app.manufacturerSyncResult} onPreflightFull={app.handlePreflightFull} onPreflightSelected={app.handlePreflightSelected} onSync={app.handleManufacturerSync} onCatalog={() => navigate('base-catalog')} />}
-    {page === 'base-diagnostics' && <BaseDiagnosticsPage catalog={catalog} catalogCode={app.activeCatalogCode} dryRunMode={app.dryRunMode} baseConfigured={app.baseConfigured} />}
+    {page === 'base-diagnostics' && <BaseDiagnosticsPage catalog={catalog} catalogCode={app.activeCatalogCode} dryRunMode={app.dryRunMode} baseConfigured={app.baseConfigured} baseConnection={app.baseConnection} onConnectionChanged={app.setBaseConnection} />}
     {page === 'base-orders' && <OrdersBetaPage />}
+    {page === 'base-categories' && <BaseCategoriesPage dryRunMode={app.dryRunMode}
+      onProductsChanged={app.handleCategoryMappingsChanged} />}
     {['preflight', 'confirmation', 'result'].includes(page) && <ImportFlowPage stage={page} scope={importScope} result={page === 'result' ? importResult : preflightResult} preflightError={preflightError} importError={importError} preflightLoading={preflightLoading} importLoading={activeImportLoading} catalog={catalog} selectedCount={selectedIds.length} dryRunMode={app.dryRunMode} testModeEnabled={app.testModeEnabled} baseApiRequestsPerMinute={app.baseApiRequestsPerMinute} importReadStrategy={app.importReadStrategy} onBack={() => setPage(page === 'confirmation' ? 'preflight' : 'base-operations')} onContinue={() => setPage('confirmation')} onImport={importScope === 'full' ? app.handleImportFull : app.handleImportSelected} onCatalog={() => navigate('base-catalog')} />}
   </AppShell>;
 }

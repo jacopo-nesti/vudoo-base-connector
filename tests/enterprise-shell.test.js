@@ -4,7 +4,7 @@ import { SAFE_COMMANDS, filterCommands, nextCommandIndex } from '../renderer/src
 import { NOTIFICATION_KEY, OPERATION_EVENTS, normalizeNotifications, readNotifications, writeNotifications, addNotification, clearNoncritical } from '../renderer/src/operationNotifications.js';
 
 test('command palette exposes only safe navigation commands and filters by Italian labels', () => {
-  assert.deepEqual(SAFE_COMMANDS.map(item => item.id), ['search', 'base-catalog', 'system-problems', 'base-overview', 'base-operations', 'base-diagnostics', 'system-settings', 'catalog']);
+  assert.deepEqual(SAFE_COMMANDS.map(item => item.id), ['search', 'base-catalog', 'system-problems', 'base-overview', 'base-operations', 'base-categories', 'base-diagnostics', 'system-settings', 'catalog']);
   assert.deepEqual(filterCommands('ETSY').map(item => item.id), []);
   assert.equal(filterCommands('pubblica').length, 0);
   assert.equal(filterCommands('ean')[0].id, 'search');

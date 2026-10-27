@@ -2,7 +2,8 @@ import { preflightPreparedVudooCatalog } from '../src/vudooImport.js';
 import { toPreflightResult } from './catalogResults.js';
 import { prepareEffectiveSelectedCatalog } from './effectiveCatalog.js';
 
-export async function preflightSelectedCatalog(activeCatalog, selectedIds, overrides = {}, companyCode, runtimeMappings = {}) {
+export async function preflightSelectedCatalog(activeCatalog, selectedIds, overrides = {}, companyCode,
+  runtimeMappings = {}, onCategoryIndex) {
   if (!activeCatalog) throw new Error('Carica un catalogo Vudoo prima del preflight.');
   if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
     throw new Error('Seleziona almeno un prodotto prima del preflight.');
@@ -10,6 +11,6 @@ export async function preflightSelectedCatalog(activeCatalog, selectedIds, overr
 
   const startedAt = Date.now();
   const prepared = prepareEffectiveSelectedCatalog(activeCatalog, selectedIds, overrides, companyCode, runtimeMappings);
-  return { ...toPreflightResult(await preflightPreparedVudooCatalog(prepared)),
+  return { ...toPreflightResult(await preflightPreparedVudooCatalog(prepared, { onCategoryIndex })),
     durationMs: Math.max(0, Date.now() - startedAt) };
 }

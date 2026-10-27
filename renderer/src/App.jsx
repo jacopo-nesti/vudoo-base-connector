@@ -21,6 +21,7 @@ function App() {
     const [importReadStrategy, setImportReadStrategy] = useState(null);
     const [runtimeModeError, setRuntimeModeError] = useState("");
     const [baseConfigured, setBaseConfigured] = useState(undefined);
+    const [baseConnection, setBaseConnection] = useState(null);
 
     // Vudoo catalog
     const [companyCode, setCompanyCode] = useState("");
@@ -87,6 +88,7 @@ function App() {
                         ? mode.baseApiRequestsPerMinute : null);
                     setImportReadStrategy(mode?.importReadStrategy ?? null);
                     setBaseConfigured(typeof mode?.baseConfigured === 'boolean' ? mode.baseConfigured : undefined);
+                    setBaseConnection(mode?.baseConnection ?? null);
                 }
             })
             .catch(() => {
@@ -146,6 +148,7 @@ function App() {
         setCatalogError("")
         try {
         const result = await window.electronAPI.fetchCatalog(code)
+        if (result?.baseConnection) setBaseConnection(result.baseConnection);
         const changedCatalog = code !== activeCatalogCode;
         const availableIds = new Set(result?.products?.map(product => product.id) ?? []);
         setActiveCatalogCode(code)
@@ -210,8 +213,9 @@ function App() {
         setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
     }
 
-    function handleSettingsModeChanged(nextDryRun) {
+    function handleSettingsModeChanged(nextDryRun, nextTestMode) {
         setDryRunMode(nextDryRun);
+        if (typeof nextTestMode === 'boolean') setTestModeEnabled(nextTestMode);
         if (catalog) void handleRetryInventory().catch(() => {});
     }
 
@@ -274,10 +278,19 @@ function App() {
         return { product: updated.get(input.ids[0]), warning: response.warning };
     }
 
-    function handleCategoryMappingsChanged(products, quality) {
+    function handleCategoryMappingsChanged(products, quality, meta = {}) {
+        if (meta?.baseConnection) setBaseConnection(meta.baseConnection);
         if (!Array.isArray(products)) return;
-        setCatalog(current => current && ({ ...current, products, quality: quality ?? current.quality }));
+        setCatalog(current => current && ({ ...current, products, quality: quality ?? current.quality,
+            mappingError: Object.hasOwn(meta, 'mappingError') ? meta.mappingError : current.mappingError,
+            categoryError: Object.hasOwn(meta, 'categoryError') ? meta.categoryError : null }));
         invalidateSelectedResults(); setFullPreflightResult(null); setFullImportResult(null);
+    }
+    async function handleRetryCategories() {
+        const response = await window.electronAPI.getBaseCategories();
+        if (!response?.ok) throw new Error(response?.error || 'Categorie Base.com non disponibili.');
+        handleCategoryMappingsChanged(response.products, response.quality, response);
+        return response;
     }
 
     function updateSelection(nextIds) {
@@ -321,6 +334,8 @@ function App() {
             if (!response?.ok || !response.result) {
                 throw new Error(response?.error || "Risposta non valida durante i controlli preliminari.");
             }
+            if (response.categoryState) handleCategoryMappingsChanged(response.categoryState.products,
+                response.categoryState.quality, response.categoryState);
             setPreflightResult(response.result);
             if (response.inventoryStatus) setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
         } catch (error) {
@@ -382,6 +397,8 @@ function App() {
             if (!response?.ok || !response.result) {
                 throw new Error(response?.error || "Risposta non valida durante i controlli preliminari.");
             }
+            if (response.categoryState) handleCategoryMappingsChanged(response.categoryState.products,
+                response.categoryState.quality, response.categoryState);
             setFullPreflightResult(response.result);
             if (response.inventoryStatus) setCatalog(current => current && ({ ...current, inventoryStatus: response.inventoryStatus }));
         } catch (error) {
@@ -455,7 +472,7 @@ function App() {
     }
 
   return <AppPresentation model={{
-    page, setPage, importScope, baseConfigured,
+    page, setPage, importScope, baseConfigured, baseConnection, setBaseConnection,
     response, handlePing, environment, environmentError, loading, handleEnvironmentCheck,
     dryRunMode, handleSetOperatingMode, setDryRunMode, handleSettingsModeChanged,
     testModeEnabled, baseApiRequestsPerMinute, importReadStrategy, runtimeModeError,
@@ -463,7 +480,7 @@ function App() {
     manufacturerDirectoryWarning, pendingManufacturerCode, setPendingManufacturerCode, handleSaveManufacturer,
     handleSelectInventory, handleRetryInventory,
     handleSaveProductOverride, handleSaveProductFields, handleSaveProductCategory,
-    handleCategoryMappingsChanged, handleLocalMediaChanged, handleBulkEditProducts,
+    handleCategoryMappingsChanged, handleRetryCategories, handleLocalMediaChanged, handleBulkEditProducts,
     selectedIds, previousSelectedIds, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter,
     categories, canonicalCategories,
     extraFilters, setExtraFilters, filteredProducts, selectedIdSet,

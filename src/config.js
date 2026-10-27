@@ -3,7 +3,12 @@ export let token = process.env.BASE_API_TOKEN?.trim();
 export function refreshBaseToken() { token = process.env.BASE_API_TOKEN?.trim(); return Boolean(token); }
 export const inventoryId = process.env.BASE_INVENTORY_ID?.trim();
 export const warehouseId = process.env.BASE_WAREHOUSE_ID?.trim();
-export const testMode = process.env.TEST_MODE ?? 'true';
+export let testMode = process.env.TEST_MODE ?? 'false';
+export function setTestMode(enabled) {
+  if (typeof enabled !== 'boolean') throw new TypeError('Limite di prova non valido.');
+  testMode = String(enabled);
+  process.env.TEST_MODE = testMode;
+}
 export let dryRun = process.env.DRY_RUN ?? 'false';
 export function setDryRunMode(enabled) {
   if (typeof enabled !== 'boolean') throw new TypeError('Modalità operativa non valida.');
