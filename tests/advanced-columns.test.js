@@ -17,7 +17,7 @@ test('compact column defaults apply to new and reset tables without changing sav
   const defaults = defaultColumnWidths();
   assert.deepEqual(defaults, {
     sku: 100, title: 300, ean: 135, brand: 120,
-    category: 160, mpn: 110, price: 90, stock: 80,
+    category: 160, mpn: 110, price: 124, stock: 100,
   });
   assert.ok(defaults.title > Math.max(...Object.entries(defaults).filter(([key]) => key !== 'title').map(([, width]) => width)));
   assert.deepEqual(readTableState('base', storage).widths, defaults);
@@ -38,6 +38,57 @@ test('compact column defaults apply to new and reset tables without changing sav
   assert.deepEqual(reset.widths, defaults);
   assert.equal(reset.views[0].widths.price, 130);
   assert.equal(reset.views[0].widths.title, 440);
+});
+
+test('Prezzo and Scorta keep usable bounds across preferences, saved views and table reset', () => {
+  const storage = memory();
+  assert.deepEqual([productColumns.price.min, productColumns.price.defaultWidth, productColumns.price.max], [116, 124, 240]);
+  assert.deepEqual([productColumns.stock.min, productColumns.stock.defaultWidth, productColumns.stock.max], [96, 100, 180]);
+  storage.setItem(UI_KEY, JSON.stringify({ schemaVersion: 1, base: {
+    widths: { price: 35, stock: 30, title: 410 },
+    views: [{ id: 'custom', name: 'Custom', widths: { price: 160, stock: 120 } },
+      { id: 'legacy', name: 'Legacy', widths: { price: 35, stock: 30 } }],
+  } }));
+  const reopened = readTableState('base', storage);
+  assert.equal(reopened.widths.price, 116);
+  assert.equal(reopened.widths.stock, 96);
+  assert.equal(reopened.widths.title, 410);
+  assert.equal(reopened.views[0].widths.price, 160);
+  assert.equal(reopened.views[0].widths.stock, 120);
+  assert.equal(reopened.views[1].widths.price, 116);
+  assert.equal(reopened.views[1].widths.stock, 96);
+  assert.equal(clampColumnWidth('price', 140), 140);
+  assert.equal(clampColumnWidth('stock', 110), 110);
+  assert.equal(clampColumnWidth('price', 9999), 240);
+  assert.equal(clampColumnWidth('stock', 9999), 180);
+  for (const tableFontSize of [12, 14, 18]) {
+    assert.equal(writeLayoutPreferences({ tableFontSize }, storage), true);
+    assert.equal(readLayoutPreferences(storage).tableFontSize, tableFontSize);
+    assert.equal(readTableState('base', storage).widths.price, 116);
+    assert.equal(readTableState('base', storage).widths.stock, 96);
+  }
+  assert.equal(writeTableState('base', { ...reopened, widths: defaultColumnWidths() }, storage), true);
+  const reset = readTableState('base', storage);
+  assert.equal(reset.widths.price, 124);
+  assert.equal(reset.widths.stock, 100);
+  assert.equal(reset.views[0].widths.price, 160);
+  assert.equal(reset.views[0].widths.stock, 120);
+});
+
+test('numeric headers and cells share alignment and leave sorting and resize space', () => {
+  const catalog = readFileSync(new URL('../renderer/src/pages/CatalogPage.jsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../renderer/src/enterpriseTables.css', import.meta.url), 'utf8');
+  const baseCss = readFileSync(new URL('../renderer/src/index.css', import.meta.url), 'utf8');
+  assert.match(catalog, /\['price', 'stock'\]\.includes\(key\) \? 'numeric '/);
+  assert.match(catalog, /\['price','stock'\]\.includes\(key\) \? 'numeric mono'/);
+  assert.match(css, /\.product-configurable-table th:not\(\.check-col\) \{ padding-right:16px; \}/);
+  assert.match(css, /\.product-configurable-table td\.numeric \{ padding-right:16px; \}/);
+  assert.match(css, /\.product-configurable-table th\.numeric \.table-sort \{ white-space:nowrap; \}/);
+  assert.match(css, /font-size:clamp\(10px,calc\(var\(--table-font-size,12px\) \* \.78\),14px\)/);
+  assert.match(baseCss, /\.table \.numeric \{ text-align: right; white-space: nowrap; \}/);
+  assert.match(css, /\.column-resizer \{ position:absolute; right:0;/);
+  assert.match(css, /\.product-configurable-table \.pinned-product-column \{[^}]*var\(--color-surface\)/);
+  assert.match(css, /\.enterprise-table\[data-density="compact"\] td/);
 });
 
 test('product columns keep visibility, order, widths, pins and sorting on reload', () => {

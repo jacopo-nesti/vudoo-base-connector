@@ -22,6 +22,7 @@
 .enterprise-table .table-scroll { max-height:65vh; overflow:auto; }
 .enterprise-table thead th { position:sticky; top:0; z-index:2; background:var(--color-surface-raised); box-shadow:0 1px var(--color-border); }
 .enterprise-table .product-configurable-table { font-size:var(--table-font-size,12px); }
+.enterprise-table .product-configurable-table th { font-size:clamp(10px,calc(var(--table-font-size,12px) * .78),14px); }
 .enterprise-table[data-density="compact"] td { padding-top:7px; padding-bottom:7px; }
 .enterprise-table[data-density="compact"] .catalog-thumb { width:30px; height:30px; }
 .enterprise-bulk-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 14px; position:sticky; bottom:12px; z-index:5; border:1px solid var(--color-bulk-border); background:var(--color-bulk-bg); box-shadow:0 6px 24px #18345820; border-radius:8px; margin:8px 0; }
@@ -46,6 +47,8 @@
 .product-configurable-table tbody tr.inspected .pinned-product-column,
 .product-configurable-table tbody tr.inspected .pinned-selection { background:var(--color-row-selected); }
 .product-configurable-table th:not(.check-col) { padding-right:16px; }
+.product-configurable-table td.numeric { padding-right:16px; }
+.product-configurable-table th.numeric .table-sort { white-space:nowrap; }
 .column-resizer { position:absolute; right:0; top:0; bottom:0; width:9px; cursor:col-resize; touch-action:none; border-right:2px solid transparent; }
 .column-resizer:hover,.column-resizer:focus-visible { border-right-color:var(--color-primary-label); outline:none; }
 .settings-column-grid { display:grid; gap:8px; }

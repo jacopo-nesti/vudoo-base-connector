@@ -20,14 +20,34 @@ const tabs = [
   ['advanced', 'Avanzate'],
 ];
 const fields = [
-  { key: 'vudooResultsLimit', label: 'Limite prodotti Vudoo', min: 1, sliderMin: 100, max: 100000, step: 100, defaultValue: 3000, section: 'technical', description: 'Numero massimo di risultati richiesti per catalogo.' },
-  { key: 'vudooTimeoutMs', label: 'Timeout caricamento catalogo', min: 1, max: 3600, step: 1, defaultValue: 90, section: 'technical', scale: 1000, unit: 'secondi', description: 'Durata massima di attesa della risposta Vudoo.' },
-  { key: 'automaticStockCap', label: 'Stock automatico massimo', min: 1, max: 100, step: 1, defaultValue: 10, section: 'catalog', description: 'Limita la quantità automatica destinata a Base.com. Gli override manuali hanno priorità.' },
-  { key: 'baseApiRequestsPerMinute', label: 'Richieste Base.com al minuto', min: 1, max: 10000, step: 1, defaultValue: 95, section: 'base' },
-  { key: 'baseApiReadAttempts', label: 'Tentativi lettura Base.com', min: 1, max: 10, step: 1, defaultValue: 3, section: 'base' },
-  { key: 'baseApiRetryDelayMs', label: 'Ritardo tra i tentativi', min: 0.001, sliderMin: 1, max: 3600, step: 1, defaultValue: 1, section: 'base', scale: 1000, unit: 'secondi' },
-  { key: 'baseApiRateLimitDelayMs', label: 'Pausa dopo limite API', min: 0.001, sliderMin: 1, max: 3600, step: 1, defaultValue: 60, section: 'base', scale: 1000, unit: 'secondi' },
+  { key: 'vudooResultsLimit', label: 'Limite prodotti Vudoo', icon: 'stack', min: 1, sliderMin: 100, max: 100000, step: 100, defaultValue: 3000, section: 'technical', description: 'Numero massimo di risultati richiesti per catalogo.' },
+  { key: 'vudooTimeoutMs', label: 'Timeout caricamento catalogo', icon: 'clock', min: 1, max: 3600, step: 1, defaultValue: 90, section: 'technical', scale: 1000, unit: 'secondi', description: 'Durata massima di attesa della risposta Vudoo.' },
+  { key: 'automaticStockCap', label: 'Stock automatico massimo', icon: 'stack', min: 1, max: 100, step: 1, defaultValue: 10, section: 'catalog', description: 'Limita la quantità automatica destinata a Base.com. Gli override manuali hanno priorità.' },
+  { key: 'baseApiRequestsPerMinute', label: 'Richieste Base.com al minuto', icon: 'activity', min: 1, max: 10000, step: 1, defaultValue: 95, section: 'base', description: 'Limite locale delle richieste inviate a Base.com.' },
+  { key: 'baseApiReadAttempts', label: 'Tentativi lettura Base.com', icon: 'refresh', min: 1, max: 10, step: 1, defaultValue: 3, section: 'base', description: 'Numero massimo di tentativi per le letture Base.com.' },
+  { key: 'baseApiRetryDelayMs', label: 'Ritardo tra i tentativi', icon: 'clock', min: 0.001, sliderMin: 1, max: 3600, step: 1, defaultValue: 1, section: 'base', scale: 1000, unit: 'secondi', description: 'Attesa prima di riprovare una lettura.' },
+  { key: 'baseApiRateLimitDelayMs', label: 'Pausa dopo limite API', icon: 'clock', min: 0.001, sliderMin: 1, max: 3600, step: 1, defaultValue: 60, section: 'base', scale: 1000, unit: 'secondi', description: 'Pausa applicata dopo una risposta di limite richieste.' },
 ];
+const settingsHeadings = {
+  general: ['Impostazioni', 'Informazioni sull’applicazione e sullo stato corrente.'],
+  technical: ['Impostazioni tecniche', 'Parametri effettivi del caricamento catalogo Vudoo.'],
+  catalog: ['Catalogo e importazione', 'Preferenze effettive per la preparazione del catalogo e le operazioni di prova.'],
+  base: ['Impostazioni Base.com', 'Stato della connessione e parametri operativi disponibili.'],
+  layout: ['Layout', 'Personalizza l’aspetto dell’interfaccia.'],
+  columns: ['Colonne prodotti', 'Configura la tabella del Product Manager.'],
+  advanced: ['Impostazioni avanzate', 'Strumenti locali essenziali.'],
+};
+const settingPaths = {
+  stack: <><path d="m3 7 9-4 9 4-9 4-9-4Zm0 5 9 4 9-4M3 17l9 4 9-4" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  activity: <path d="M3 12h4l3-7 4 14 3-7h4" />,
+  refresh: <><path d="M20 11a8 8 0 0 0-14-5L4 8m0-4v4h4M4 13a8 8 0 0 0 14 5l2-2m0 4v-4h-4" /></>,
+  link: <><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l2-2" /></>,
+  shield: <><path d="m12 2 8 4v6c0 5-3 8-8 10-5-2-8-5-8-10V6l8-4Z" /><path d="m8 12 3 3 5-6" /></>,
+};
+function SettingIcon({ name = 'stack' }) {
+  return <span className="settings-card-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{settingPaths[name]}</svg></span>;
+}
 const numericFields = fields.map(field => ({
   key: field.key, label: field.label,
   min: field.scale ? field.min * field.scale : field.min,
@@ -46,9 +66,8 @@ export function NumericSetting({ field, value, onChange, disabled }) {
   const inRange = shown !== '' && Number.isSafeInteger(Number(value)) && numeric >= field.min && numeric <= field.max;
   const useSlider = field.max <= 100000;
   const update = raw => onChange(field.key, raw === '' ? '' : String(Math.round(Number(raw) * (field.scale || 1))));
-  return <div className="settings-control">
-    <div className="settings-control-heading"><label htmlFor={`setting-${field.key}`}>{field.label}</label><strong>{inRange ? `${shown} ${field.unit || ''}` : 'Valore da verificare'}</strong></div>
-    {field.description && <p>{field.description}</p>}
+  return <section className="card settings-section settings-field-card">
+    <div className="settings-card-heading"><SettingIcon name={field.icon} /><div><h2><label htmlFor={`setting-${field.key}`}>{field.label}</label></h2>{field.description && <p>{field.description}</p>}</div></div>
     <div className="settings-number-control">
       {useSlider && <><span className="settings-range-label">{field.sliderMin || field.min}</span><input aria-label={`${field.label}: cursore`} type="range" min={field.sliderMin || field.min} max={field.max} step={field.step}
         value={inRange ? clamp(numeric, field.sliderMin || field.min, field.max) : field.defaultValue} onChange={event => update(Number(event.target.value))} disabled={disabled} /><span className="settings-range-label">{field.max}</span></>}
@@ -59,9 +78,9 @@ export function NumericSetting({ field, value, onChange, disabled }) {
         }} aria-invalid={shown !== '' && !inRange} disabled={disabled} required />
       {field.unit && <span>{field.unit}</span>}
     </div>
-    {!useSlider && <small>Valori consentiti: {field.min}–{field.max}.</small>}
+    <small>Valori consentiti: {field.min}–{field.max}{field.unit ? ` ${field.unit}` : ''}. {inRange ? `Valore corrente: ${shown}${field.unit ? ` ${field.unit}` : ''}.` : 'Verifica il valore inserito.'}</small>
     {field.key === 'baseApiRequestsPerMinute' && <small>{rateLimitGuidance(inRange ? numeric : field.defaultValue)}</small>}
-  </div>;
+  </section>;
 }
 
 function ToggleSetting({ id, title, description, checked, onChange, disabled }) {
@@ -201,7 +220,7 @@ function ColumnsSettings({ state, onChange, filters, storageError, pageSize, onR
   </div>;
 }
 
-export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, baseConfigured, baseConnection, catalog, onModeChanged, onDiagnostics, onCategoryMappingsChanged, filters = {} }) {
+export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, baseConfigured, baseConnection, catalog, onModeChanged, onDiagnostics, onConnectionChanged, onCategoryMappingsChanged, filters = {} }) {
   const [tab, setTab] = useState(initialTab || (scope === 'base' ? 'base' : 'general'));
   const [snapshot, setSnapshot] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -214,6 +233,8 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, b
   const [storageError, setStorageError] = useState(false);
   const [pageSizeInput, setPageSizeInput] = useState(() => String(readLayoutPreferences().pageSize));
   const [retryCount, setRetryCount] = useState(0);
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const [connectionError, setConnectionError] = useState('');
   const [localInfo, setLocalInfo] = useState(null);
   const [localFeedback, setLocalFeedback] = useState('');
   const resetDialog = useRef(null);
@@ -266,6 +287,15 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, b
     } else setStorageError(true);
     resetDialog.current?.close();
   }
+  async function verifyBaseConnection() {
+    setConnectionBusy(true); setConnectionError('');
+    try {
+      const response = await window.electronAPI.checkEnvironment();
+      if (!Array.isArray(response?.checks) || !response?.baseConnection) throw new Error('unavailable');
+      onConnectionChanged?.(response.baseConnection);
+    } catch { setConnectionError('Verifica della connessione non riuscita. Riprova o apri Diagnostica.'); }
+    finally { setConnectionBusy(false); }
+  }
   async function save(event) {
     event.preventDefault();
     const parsed = parseNumericSettings(draft, numericFields);
@@ -297,10 +327,12 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, b
   if (!snapshot || !draft) return <div className="card"><p className="alert alert-danger" role="alert">{error}</p><button className="btn btn-secondary" type="button" onClick={() => { setLoading(true); setError(''); setRetryCount(value => value + 1); }}>Riprova</button></div>;
   const dirty = Object.keys(draft).some(key => String(draft[key]) !== String(snapshot.settings[key]));
   const requiresRestart = Object.keys(snapshot.activeSettings).some(key => !['dryRun', 'testMode'].includes(key) && String(draft[key]) !== String(snapshot.activeSettings[key]));
+  const baseState = baseConnectionView(baseConnection?.configured ?? baseConfigured, baseConnection?.verification);
+  const activeInventoryId = catalog?.inventoryStatus?.inventoryId ?? catalog?.baseInventoryId;
   return <section className="settings-panel" aria-label="Impostazioni Vudoo e Base.com">
     <nav className="settings-tabs" aria-label="Sezioni impostazioni">{tabs.map(([id, label]) =>
       <button type="button" key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => { setTab(id); setError(''); }}>{label}</button>)}</nav>
-    <div className="page-heading"><div><h1>Impostazioni</h1><p>Configurazione locale Vudoo e Base.com.</p></div></div>
+    <div className="page-heading"><div><h1>{settingsHeadings[tab][0]}</h1><p>{settingsHeadings[tab][1]}</p></div></div>
     {snapshot.warning && <div className="alert alert-warning" role="alert">Il file delle impostazioni non è stato letto correttamente: sono in uso i valori predefiniti.</div>}
     {snapshot.environmentWarnings?.length > 0 && <div className="alert alert-warning" role="alert">Alcuni valori .env non sono validi: {snapshot.environmentWarnings.join(', ')}.</div>}
     {tab === 'general' && <div className="settings-sections settings-cards">
@@ -333,14 +365,17 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, b
       {storageError && <p role="alert" className="alert alert-danger">Non è stato possibile salvare le preferenze locali.</p>}
       <dialog ref={resetDialog} className="settings-reset-dialog" aria-labelledby="reset-ui-title"><h2 id="reset-ui-title">Ripristinare le preferenze dell’interfaccia?</h2><p>Tema, densità, dimensioni e altre preferenze visive torneranno ai valori predefiniti.</p><p>I prodotti e i dati Base.com non verranno modificati.</p><div className="settings-preview-actions"><button type="button" className="btn btn-secondary" onClick={() => resetDialog.current?.close()}>Annulla</button><button type="button" className="btn btn-primary" onClick={restoreVisualPreferences}>Ripristina</button></div></dialog>
     </div>}
-    {['technical', 'catalog', 'base'].includes(tab) && <form className="settings-sections" onSubmit={save}>
-      <section className="card settings-section"><div className="settings-section-heading"><div><h2>{tabs.find(([id]) => id === tab)?.[1]}</h2><p>{tab === 'technical' ? 'Configurazione del caricamento Vudoo.' : tab === 'catalog' ? 'Preparazione e limiti dell’importazione.' : 'Parametri operativi Base.com; la verifica della connessione resta in Diagnostica.'}</p></div>{tab === 'base' && <button className="btn btn-secondary btn-sm" type="button" onClick={onDiagnostics}>Apri Diagnostica</button>}</div>
-        {tab === 'catalog' && <ToggleSetting id="setting-testMode" title="Limite di prova" description="Elabora un solo prodotto; non modifica la modalità Simulazione/Reale." checked={draft.testMode} onChange={value => update('testMode', value)} disabled={busy} />}
-        {tab === 'base' && <><ToggleSetting id="setting-dryRun" title="Modalità simulazione" description="Quando attiva, nessuna importazione modifica Base.com." checked={draft.dryRun} onChange={value => update('dryRun', value)} disabled={busy} />
-          <p className={`alert ${draft.dryRun ? 'alert-warning' : 'alert-danger'}`}>{draft.dryRun ? 'Simulazione: nessuna modifica inviata a Base.com.' : 'Modalità reale: le operazioni di import possono modificare Base.com.'}</p>
-          {snapshot.activeSettings.dryRun !== draft.dryRun && <small>Modalità attiva: {snapshot.activeSettings.dryRun ? 'Simulazione' : 'Reale'}; il valore selezionato sarà applicato dopo il salvataggio.</small>}</>}
-        {fields.filter(field => field.section === tab).map(field => <NumericSetting key={field.key} field={field} value={draft[field.key]} onChange={update} disabled={busy} />)}
-      </section>
+    {['technical', 'catalog', 'base'].includes(tab) && <form className="settings-sections settings-business-form" onSubmit={save}>
+      {tab === 'base' && <div className={`settings-connection-banner settings-connection-banner--${baseState.tone}`} role="status"><SettingIcon name="link" /><div><strong>{baseState.text}</strong><p>Stato condiviso con Diagnostica Base.com. La verifica viene eseguita solo su richiesta.</p></div><div className="settings-connection-actions"><button className="btn btn-secondary btn-sm" type="button" onClick={verifyBaseConnection} disabled={connectionBusy}>{connectionBusy ? 'Verifica in corso…' : 'Verifica connessione'}</button><button className="btn btn-quiet btn-sm" type="button" onClick={onDiagnostics}>Apri Diagnostica</button></div></div>}
+      {connectionError && tab === 'base' && <p className="alert alert-danger" role="alert">{connectionError}</p>}
+      {tab === 'catalog' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="shield" /><div><h2>Limite di prova</h2><p>Elabora un solo prodotto; non modifica la modalità Simulazione/Reale.</p></div></div><ToggleSetting id="setting-testMode" title="Un prodotto per operazione di prova" description="La scelta diventa attiva dopo il salvataggio." checked={draft.testMode} onChange={value => update('testMode', value)} disabled={busy} /></section>}
+      {tab === 'base' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="shield" /><div><h2>Modalità operativa</h2><p>Controlla se le importazioni possono modificare Base.com.</p></div></div><ToggleSetting id="setting-dryRun" title="Modalità simulazione" description="Quando attiva, nessuna importazione modifica Base.com." checked={draft.dryRun} onChange={value => update('dryRun', value)} disabled={busy} />
+        <p className={`alert ${draft.dryRun ? 'alert-warning' : 'alert-danger'}`}>{draft.dryRun ? 'Simulazione: nessuna modifica inviata a Base.com.' : 'Modalità reale: le operazioni di import possono modificare Base.com.'}</p>
+        {snapshot.activeSettings.dryRun !== draft.dryRun && <small>Modalità attiva: {snapshot.activeSettings.dryRun ? 'Simulazione' : 'Reale'}; il valore selezionato sarà applicato dopo il salvataggio.</small>}</section>}
+      {tab === 'base' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="link" /><div><h2>Connessione API</h2><p>Il token Base.com viene letto dalla configurazione locale dell’app e non è modificabile qui.</p></div></div><span className={`base-connection-state base-connection-state--${baseState.tone}`}><span className="base-connection-dot" aria-hidden="true" />{baseState.text}</span></section>}
+      {tab === 'base' && catalog && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="stack" /><div><h2>Inventory del catalogo attivo</h2><p>Associazione già rilevata per il catalogo Vudoo corrente.</p></div></div><strong>{activeInventoryId == null ? 'Non associato' : `ID ${activeInventoryId}`}</strong></section>}
+      {fields.filter(field => field.section === tab).map(field => <NumericSetting key={field.key} field={field} value={draft[field.key]} onChange={update} disabled={busy} />)}
+      {tab === 'catalog' && catalog && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="stack" /><div><h2>Catalogo caricato</h2><p>Dati dell’ultimo caricamento in questa sessione.</p></div></div><strong>{catalog.totalProducts ?? catalog.products?.length ?? 'Non disponibile'} prodotti</strong>{Number.isFinite(catalog.durationMs) && <small>Durata caricamento: {Math.round(catalog.durationMs / 1000)} secondi.</small>}</section>}
       {tab === 'catalog' && <CategoryMappingsSettings onProductsChanged={onCategoryMappingsChanged} />}
       {dirty && <p className="alert alert-warning settings-unsaved" role="status">Modifiche non salvate.</p>}
       {message && <p className="alert alert-success" role="status">{message}</p>}

@@ -51,8 +51,8 @@ export const productColumns = Object.freeze({
   brand:    { label: 'Brand',     min: 100, defaultWidth: 120, max: 280 },
   category: { label: 'Categoria', min: 140, defaultWidth: 160, max: 400 },
   mpn:      { label: 'MPN',       min: 90,  defaultWidth: 110, max: 260 },
-  price:    { label: 'Prezzo',    min: 90,  defaultWidth: 90,  max: 180, sort: 'price' },
-  stock:    { label: 'Scorta',    min: 70,  defaultWidth: 80,  max: 140, sort: 'quantity' },
+  price:    { label: 'Prezzo',    min: 116, defaultWidth: 124, max: 240, sort: 'price' },
+  stock:    { label: 'Scorta',    min: 96,  defaultWidth: 100, max: 180, sort: 'quantity' },
 });
 export const columnDefinitions = { base: Object.fromEntries(Object.entries(productColumns).map(([key, value]) => [key, value.label])) };
 export const defaultColumns = channel => Object.fromEntries(Object.keys(columnDefinitions[channel] || {}).map(key => [key, key !== 'mpn']));
