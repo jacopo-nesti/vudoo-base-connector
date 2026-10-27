@@ -12,6 +12,34 @@ const memory = () => {
   return { getItem: key => data.get(key), setItem: (key, value) => data.set(key, value) };
 };
 
+test('compact column defaults apply to new and reset tables without changing saved widths or views', () => {
+  const storage = memory();
+  const defaults = defaultColumnWidths();
+  assert.deepEqual(defaults, {
+    sku: 100, title: 300, ean: 135, brand: 120,
+    category: 160, mpn: 110, price: 90, stock: 80,
+  });
+  assert.ok(defaults.title > Math.max(...Object.entries(defaults).filter(([key]) => key !== 'title').map(([, width]) => width)));
+  assert.deepEqual(readTableState('base', storage).widths, defaults);
+
+  const state = readTableState('base', storage);
+  state.widths.price = 145;
+  state.widths.category = 315;
+  state.views = [{ id: 'custom', name: 'Custom', widths: { price: 130, title: 440 } }];
+  assert.equal(writeTableState('base', state, storage), true);
+  const reopened = readTableState('base', storage);
+  assert.equal(reopened.widths.price, 145);
+  assert.equal(reopened.widths.category, 315);
+  assert.equal(reopened.views[0].widths.price, 130);
+  assert.equal(reopened.views[0].widths.title, 440);
+
+  assert.equal(writeTableState('base', { ...reopened, widths: defaultColumnWidths() }, storage), true);
+  const reset = readTableState('base', storage);
+  assert.deepEqual(reset.widths, defaults);
+  assert.equal(reset.views[0].widths.price, 130);
+  assert.equal(reset.views[0].widths.title, 440);
+});
+
 test('product columns keep visibility, order, widths, pins and sorting on reload', () => {
   const storage = memory();
   const state = readTableState('base', storage);

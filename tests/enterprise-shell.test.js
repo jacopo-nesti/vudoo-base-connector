@@ -1,7 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { SAFE_COMMANDS, filterCommands, nextCommandIndex } from '../renderer/src/commandPalette.js';
 import { NOTIFICATION_KEY, OPERATION_EVENTS, normalizeNotifications, readNotifications, writeNotifications, addNotification, clearNoncritical } from '../renderer/src/operationNotifications.js';
+
+test('sidebar keeps the requested page order and section headings', () => {
+  const source = readFileSync(new URL('../renderer/src/components/AppShell.jsx', import.meta.url), 'utf8');
+  const sectionSource = source.match(/const sections = \[([\s\S]*?)\];\s*const activePage/)?.[1];
+  assert.ok(sectionSource);
+  const entries = [...sectionSource.matchAll(/\{ page: '[^']+', label: '([^']+)', icon: '[^']+'(?:, heading: '([^']+)')? \}/g)];
+  const order = entries.flatMap(([, label, heading]) => heading ? [heading, label] : [label]);
+  assert.deepEqual(order, [
+    'Panoramica', 'Produttori', 'Operazioni',
+    'CATALOGO', 'Prodotti',
+    'BASE.COM', 'Categorie', 'Ordini', 'Diagnostica',
+    'SISTEMA', 'Impostazioni', 'Guida',
+  ]);
+});
 
 test('command palette exposes only safe navigation commands and filters by Italian labels', () => {
   assert.deepEqual(SAFE_COMMANDS.map(item => item.id), ['search', 'base-catalog', 'system-problems', 'base-overview', 'base-operations', 'base-categories', 'base-diagnostics', 'system-settings', 'catalog']);

@@ -18,10 +18,10 @@ const icons = {
 const sections = [
   { page: 'base-overview', label: 'Panoramica', icon: 'overview' },
   { page: 'base-manufacturers', label: 'Produttori', icon: 'manufacturers' },
+  { page: 'base-operations', label: 'Operazioni', icon: 'operations' },
   { page: 'base-catalog', label: 'Prodotti', icon: 'catalog', heading: 'CATALOGO' },
-  { page: 'base-operations', label: 'Import / Operazioni', icon: 'operations', heading: 'BASE.COM' },
+  { page: 'base-categories', label: 'Categorie', icon: 'categories', heading: 'BASE.COM' },
   { page: 'base-orders', label: 'Ordini', icon: 'orders' },
-  { page: 'base-categories', label: 'Categorie', icon: 'categories' },
   { page: 'base-diagnostics', label: 'Diagnostica', icon: 'diagnostics' },
   { page: 'system-settings', label: 'Impostazioni', icon: 'settings', heading: 'SISTEMA' },
   { page: 'system-help', label: 'Guida', icon: 'help' },

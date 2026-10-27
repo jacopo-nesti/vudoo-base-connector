@@ -8,13 +8,14 @@ export function shouldApplyStartupView(channel) {
 export function markStartupViewHandled(channel) { startupHandled.add(channel); }
 export function allowStartupViewOnNextEntry(channel) { startupHandled.delete(channel); }
 
-const layoutDefaults = Object.freeze({ sidebarCollapsed: false, pageSize: 50 });
+const layoutDefaults = Object.freeze({ sidebarCollapsed: false, pageSize: 50, theme: 'light' });
 export function readLayoutPreferences(storage = globalThis.localStorage) {
   try {
     const all = JSON.parse(storage?.getItem(UI_KEY) || '{}');
     return {
       sidebarCollapsed: typeof all?.layout?.sidebarCollapsed === 'boolean' ? all.layout.sidebarCollapsed : layoutDefaults.sidebarCollapsed,
       pageSize: Number.isInteger(all?.layout?.pageSize) && all.layout.pageSize >= 10 && all.layout.pageSize <= 200 ? all.layout.pageSize : layoutDefaults.pageSize,
+      theme: ['light', 'dark', 'system'].includes(all?.layout?.theme) ? all.layout.theme : layoutDefaults.theme,
     };
   } catch { return { ...layoutDefaults }; }
 }
@@ -22,7 +23,7 @@ export function writeLayoutPreferences(patch, storage = globalThis.localStorage)
   try {
     const all = JSON.parse(storage?.getItem(UI_KEY) || '{}');
     const layout = { ...readLayoutPreferences(storage), ...patch };
-    if (typeof layout.sidebarCollapsed !== 'boolean' || !Number.isInteger(layout.pageSize) || layout.pageSize < 10 || layout.pageSize > 200) return false;
+    if (typeof layout.sidebarCollapsed !== 'boolean' || !Number.isInteger(layout.pageSize) || layout.pageSize < 10 || layout.pageSize > 200 || !['light', 'dark', 'system'].includes(layout.theme)) return false;
     storage.setItem(UI_KEY, JSON.stringify({ ...all, schemaVersion: 1, layout }));
     globalThis.dispatchEvent?.(new Event('vudoo:ui-preferences'));
     return true;
@@ -31,14 +32,14 @@ export function writeLayoutPreferences(patch, storage = globalThis.localStorage)
 
 // Only columns already present in the Product Manager table; selection is structural.
 export const productColumns = Object.freeze({
-  sku:      { label: 'SKU',       min: 80,  defaultWidth: 120, max: 240, sort: 'sku' },
-  title:    { label: 'Prodotto',  min: 180, defaultWidth: 320, max: 600, sort: 'title' },
-  ean:      { label: 'EAN',       min: 100, defaultWidth: 145, max: 240, sort: 'ean' },
-  brand:    { label: 'Brand',     min: 100, defaultWidth: 145, max: 280 },
-  category: { label: 'Categoria', min: 140, defaultWidth: 200, max: 400 },
-  mpn:      { label: 'MPN',       min: 90,  defaultWidth: 130, max: 260 },
-  price:    { label: 'Prezzo',    min: 90,  defaultWidth: 110, max: 180, sort: 'price' },
-  stock:    { label: 'Scorta',    min: 70,  defaultWidth: 95,  max: 140, sort: 'quantity' },
+  sku:      { label: 'SKU',       min: 80,  defaultWidth: 100, max: 240, sort: 'sku' },
+  title:    { label: 'Prodotto',  min: 180, defaultWidth: 300, max: 600, sort: 'title' },
+  ean:      { label: 'EAN',       min: 100, defaultWidth: 135, max: 240, sort: 'ean' },
+  brand:    { label: 'Brand',     min: 100, defaultWidth: 120, max: 280 },
+  category: { label: 'Categoria', min: 140, defaultWidth: 160, max: 400 },
+  mpn:      { label: 'MPN',       min: 90,  defaultWidth: 110, max: 260 },
+  price:    { label: 'Prezzo',    min: 90,  defaultWidth: 90,  max: 180, sort: 'price' },
+  stock:    { label: 'Scorta',    min: 70,  defaultWidth: 80,  max: 140, sort: 'quantity' },
 });
 export const columnDefinitions = { base: Object.fromEntries(Object.entries(productColumns).map(([key, value]) => [key, value.label])) };
 export const defaultColumns = channel => Object.fromEntries(Object.keys(columnDefinitions[channel] || {}).map(key => [key, key !== 'mpn']));

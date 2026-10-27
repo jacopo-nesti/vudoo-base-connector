@@ -239,6 +239,8 @@ async function bootstrap() {
       width: 1200,
       height: 800,
       frame: false,
+      show: false,
+      backgroundColor: '#f6f8fc',
 
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),
@@ -246,6 +248,9 @@ async function bootstrap() {
         nodeIntegration: false,
       },
     });
+
+    // The renderer reads its local theme preference before first paint.
+    window.once('ready-to-show', () => window.show());
 
     attachWindowChrome(window, app);
 

@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vudoo Base Connector</title>
+    <script>
+      (() => {
+        let preference = 'light';
+        try {
+          const saved = JSON.parse(localStorage.getItem('vudoo.ui.tables.v1') || '{}').layout?.theme;
+          if (saved === 'dark' || saved === 'system') preference = saved;
+        } catch { /* Invalid local preferences use the approved light default. */ }
+        const dark = preference === 'dark' || (preference === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
   </head>
 
   <body>

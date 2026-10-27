@@ -42,6 +42,7 @@ export default function BaseCategoryBrowser({ categories, selectedId, onSelect, 
         <button type="button" className="btn btn-quiet btn-sm" aria-pressed={selectedId === node.categoryId}
           disabled={disabledIds.has(node.categoryId)} title={node.path.join(' > ')}
           onClick={() => onSelect(node)}>{node.name}</button>
+        {dropTargetId === node.categoryId && <small className="base-category-drop-hint">Sposta dentro questa categoria</small>}
       </div>
       {expanded.has(node.categoryId) && node.children.length > 0 && nodes(node.children, depth + 1)}
     </div>);

@@ -6,13 +6,13 @@ const memory = () => { const data = new Map(); return { getItem:key=>data.get(ke
 
 test('layout preferences survive reopening and table writes without discarding saved views', () => {
   const storage = memory();
-  assert.deepEqual(readLayoutPreferences(storage), { sidebarCollapsed: false, pageSize: 50 });
+  assert.deepEqual(readLayoutPreferences(storage), { sidebarCollapsed: false, pageSize: 50, theme: 'light' });
   assert.equal(writeLayoutPreferences({ sidebarCollapsed: true, pageSize: 80 }, storage), true);
   const state = readTableState('base', storage);
   state.views = [{ id: 'favorite', name: 'Operativa', filters: { search: 'crema' } }];
   state.startup = 'favorite';
   assert.equal(writeTableState('base', state, storage), true);
-  assert.deepEqual(readLayoutPreferences(storage), { sidebarCollapsed: true, pageSize: 80 });
+  assert.deepEqual(readLayoutPreferences(storage), { sidebarCollapsed: true, pageSize: 80, theme: 'light' });
   assert.equal(readTableState('base', storage).startup, 'favorite');
   assert.equal(writeLayoutPreferences({ pageSize: 201 }, storage), false);
   assert.equal(readLayoutPreferences(storage).pageSize, 80);
