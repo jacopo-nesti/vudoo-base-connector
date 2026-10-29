@@ -3,7 +3,8 @@ import { notifyOperation } from './operationNotifications.js';
 import { rateLimitGuidance } from './rateLimitGuidance.js';
 import { parseNumericSettings } from './settingsValidation.js';
 import { baseConnectionView } from './baseConnectionView.js';
-import CategoryMappingsSettings from './components/CategoryMappingsSettings.jsx';
+import SettingHelp from './components/SettingHelp.jsx';
+import BaseTokenControl from './components/BaseTokenControl.jsx';
 import {
   allowStartupViewOnNextEntry, clampColumnWidth, defaultColumnOrder, defaultColumnWidths, defaultColumns, markStartupViewHandled,
   pinnedColumnOffsets, productColumns, readLayoutPreferences, readTableState, resetVisualPreferences, visibleColumnOrder,
@@ -28,6 +29,15 @@ const fields = [
   { key: 'baseApiRetryDelayMs', label: 'Ritardo tra i tentativi', icon: 'clock', min: 0.001, sliderMin: 1, max: 3600, step: 1, defaultValue: 1, section: 'base', scale: 1000, unit: 'secondi', description: 'Attesa prima di riprovare una lettura.' },
   { key: 'baseApiRateLimitDelayMs', label: 'Pausa dopo limite API', icon: 'clock', min: 0.001, sliderMin: 1, max: 3600, step: 1, defaultValue: 60, section: 'base', scale: 1000, unit: 'secondi', description: 'Pausa applicata dopo una risposta di limite richieste.' },
 ];
+const fieldHelp = {
+  vudooResultsLimit: 'È il numero massimo di prodotti richiesti al catalogo Vudoo. Se il catalogo è più grande, alcuni prodotti potrebbero non essere caricati. Aumentarlo permette di gestire cataloghi più grandi, ma può richiedere più tempo e risorse.',
+  vudooTimeoutMs: 'È il tempo massimo di attesa del caricamento Vudoo. Aumentalo se connessione o catalogo sono lenti; riducilo per interrompere prima richieste troppo lente. Non cambia quanti prodotti vengono restituiti.',
+  automaticStockCap: 'È la quantità massima inviata automaticamente a Base.com quando si usa lo stock Vudoo: con 10, uno stock di 50 diventa 10 e uno di 6 resta 6. Gli override manuali hanno precedenza.',
+  baseApiRequestsPerMinute: 'Limita le richieste API effettuate in un minuto per rispettare i limiti Base.com. Valori bassi rallentano le operazioni; valori alti aumentano il rischio di raggiungere il limite API.',
+  baseApiReadAttempts: 'È il numero massimo di tentativi per una lettura Base.com fallita. Più tentativi possono recuperare errori temporanei, ma allungano l’attesa prima di un errore definitivo.',
+  baseApiRetryDelayMs: 'È l’attesa prima di riprovare una lettura dopo un errore recuperabile. Aumentarla distanzia i tentativi; diminuirla li rende più rapidi.',
+  baseApiRateLimitDelayMs: 'È la pausa dopo che Base.com segnala un limite API. Consente di attendere prima di nuove richieste; una pausa troppo breve può causare altri errori di limite.',
+};
 const settingsHeadings = {
   general: ['Impostazioni', 'Informazioni sull’applicazione e sullo stato corrente.'],
   technical: ['Impostazioni tecniche', 'Parametri effettivi del caricamento catalogo Vudoo.'],
@@ -67,7 +77,7 @@ export function NumericSetting({ field, value, onChange, disabled }) {
   const useSlider = field.max <= 100000;
   const update = raw => onChange(field.key, raw === '' ? '' : String(Math.round(Number(raw) * (field.scale || 1))));
   return <section className="card settings-section settings-field-card">
-    <div className="settings-card-heading"><SettingIcon name={field.icon} /><div><h2><label htmlFor={`setting-${field.key}`}>{field.label}</label></h2>{field.description && <p>{field.description}</p>}</div></div>
+    <div className="settings-card-heading"><SettingIcon name={field.icon} /><div><h2><label htmlFor={`setting-${field.key}`}>{field.label}</label> <SettingHelp label={field.label}>{fieldHelp[field.key]}</SettingHelp></h2>{field.description && <p>{field.description}</p>}</div></div>
     <div className="settings-number-control">
       {useSlider && <><span className="settings-range-label">{field.sliderMin || field.min}</span><input aria-label={`${field.label}: cursore`} type="range" min={field.sliderMin || field.min} max={field.max} step={field.step}
         value={inRange ? clamp(numeric, field.sliderMin || field.min, field.max) : field.defaultValue} onChange={event => update(Number(event.target.value))} disabled={disabled} /><span className="settings-range-label">{field.max}</span></>}
@@ -368,15 +378,14 @@ export default function SettingsPanel({ scope = 'all', initialTab, dryRunMode, b
     {['technical', 'catalog', 'base'].includes(tab) && <form className="settings-sections settings-business-form" onSubmit={save}>
       {tab === 'base' && <div className={`settings-connection-banner settings-connection-banner--${baseState.tone}`} role="status"><SettingIcon name="link" /><div><strong>{baseState.text}</strong><p>Stato condiviso con Diagnostica Base.com. La verifica viene eseguita solo su richiesta.</p></div><div className="settings-connection-actions"><button className="btn btn-secondary btn-sm" type="button" onClick={verifyBaseConnection} disabled={connectionBusy}>{connectionBusy ? 'Verifica in corso…' : 'Verifica connessione'}</button><button className="btn btn-quiet btn-sm" type="button" onClick={onDiagnostics}>Apri Diagnostica</button></div></div>}
       {connectionError && tab === 'base' && <p className="alert alert-danger" role="alert">{connectionError}</p>}
-      {tab === 'catalog' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="shield" /><div><h2>Limite di prova</h2><p>Elabora un solo prodotto; non modifica la modalità Simulazione/Reale.</p></div></div><ToggleSetting id="setting-testMode" title="Un prodotto per operazione di prova" description="La scelta diventa attiva dopo il salvataggio." checked={draft.testMode} onChange={value => update('testMode', value)} disabled={busy} /></section>}
-      {tab === 'base' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="shield" /><div><h2>Modalità operativa</h2><p>Controlla se le importazioni possono modificare Base.com.</p></div></div><ToggleSetting id="setting-dryRun" title="Modalità simulazione" description="Quando attiva, nessuna importazione modifica Base.com." checked={draft.dryRun} onChange={value => update('dryRun', value)} disabled={busy} />
+      {tab === 'catalog' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="shield" /><div><h2>Limite di prova <SettingHelp label="Limite di prova">Limita a un prodotto l’elaborazione quando è attivo, per provare il flusso. Non cambia la modalità Reale o Simulazione. Se disattivato, non limita l’importazione normale.</SettingHelp></h2><p>Elabora un solo prodotto; non modifica la modalità Simulazione/Reale.</p></div></div><ToggleSetting id="setting-testMode" title="Un prodotto per operazione di prova" description="La scelta diventa attiva dopo il salvataggio." checked={draft.testMode} onChange={value => update('testMode', value)} disabled={busy} /></section>}
+      {tab === 'base' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="shield" /><div><h2>Modalità operativa <SettingHelp label="Modalità operativa">In Reale, le operazioni autorizzate possono creare o aggiornare prodotti e categorie su Base.com. In Simulazione, l’app mostra cosa farebbe e blocca le scritture. Controlla sempre la modalità prima di importare.</SettingHelp></h2><p>Controlla se le importazioni possono modificare Base.com.</p></div></div><ToggleSetting id="setting-dryRun" title="Modalità simulazione" description="Quando attiva, nessuna importazione modifica Base.com." checked={draft.dryRun} onChange={value => update('dryRun', value)} disabled={busy} />
         <p className={`alert ${draft.dryRun ? 'alert-warning' : 'alert-danger'}`}>{draft.dryRun ? 'Simulazione: nessuna modifica inviata a Base.com.' : 'Modalità reale: le operazioni di import possono modificare Base.com.'}</p>
         {snapshot.activeSettings.dryRun !== draft.dryRun && <small>Modalità attiva: {snapshot.activeSettings.dryRun ? 'Simulazione' : 'Reale'}; il valore selezionato sarà applicato dopo il salvataggio.</small>}</section>}
-      {tab === 'base' && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="link" /><div><h2>Connessione API</h2><p>Il token Base.com viene letto dalla configurazione locale dell’app e non è modificabile qui.</p></div></div><span className={`base-connection-state base-connection-state--${baseState.tone}`}><span className="base-connection-dot" aria-hidden="true" />{baseState.text}</span></section>}
+      {tab === 'base' && <BaseTokenControl onConnectionChanged={onConnectionChanged} />}
       {tab === 'base' && catalog && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="stack" /><div><h2>Inventory del catalogo attivo</h2><p>Associazione già rilevata per il catalogo Vudoo corrente.</p></div></div><strong>{activeInventoryId == null ? 'Non associato' : `ID ${activeInventoryId}`}</strong></section>}
       {fields.filter(field => field.section === tab).map(field => <NumericSetting key={field.key} field={field} value={draft[field.key]} onChange={update} disabled={busy} />)}
       {tab === 'catalog' && catalog && <section className="card settings-section settings-field-card"><div className="settings-card-heading"><SettingIcon name="stack" /><div><h2>Catalogo caricato</h2><p>Dati dell’ultimo caricamento in questa sessione.</p></div></div><strong>{catalog.totalProducts ?? catalog.products?.length ?? 'Non disponibile'} prodotti</strong>{Number.isFinite(catalog.durationMs) && <small>Durata caricamento: {Math.round(catalog.durationMs / 1000)} secondi.</small>}</section>}
-      {tab === 'catalog' && <CategoryMappingsSettings onProductsChanged={onCategoryMappingsChanged} />}
       {dirty && <p className="alert alert-warning settings-unsaved" role="status">Modifiche non salvate.</p>}
       {message && <p className="alert alert-success" role="status">{message}</p>}
       {error && <p className="alert alert-danger" role="alert">{error}</p>}

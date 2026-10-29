@@ -14,6 +14,10 @@ const readMethods = new Set([
 let requestQueue = Promise.resolve();
 let connectionVerification = 'unverified';
 let lastConnectedAt = null;
+export function resetBaseConnectionVerification() {
+  connectionVerification = 'unverified';
+  lastConnectedAt = null;
+}
 export function getBaseConnectionState() {
   return { configured: Boolean(token), verification: token ? connectionVerification : 'unconfigured',
     lastConnectedAt: token ? lastConnectedAt : null };

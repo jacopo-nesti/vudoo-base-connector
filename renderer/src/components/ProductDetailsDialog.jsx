@@ -145,7 +145,7 @@ export default function ProductDetailsDialog({ product, onClose, onSave, onSaveC
         <button key={name} type="button" className={`btn btn-sm ${section === name ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => navigate(name)}>{name}</button>)}</nav>
       <div className="product-dialog-body">
-        {section === 'Base.com' && <div className="alert alert-info">Questi override valgono solo per Base.com. L'invio richiede il preflight remoto Base.</div>}
+        {section === 'Base.com' && <div className="alert alert-info">Le modifiche in questa sezione vengono applicate solo ai dati inviati a Base.com. I dati originali Vudoo non vengono modificati. Prima dell'importazione verranno eseguiti automaticamente i controlli necessari.</div>}
         <div className="product-editor-grid">{fields.map(field => {
           const layer = product.provenance?.[field.key];
           const fieldScope = editorFieldScope(section, field.key);

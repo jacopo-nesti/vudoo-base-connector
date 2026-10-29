@@ -29,7 +29,7 @@ test('Base status and verification use the shared connection state and existing 
   assert.match(presentation, /onConnectionChanged=\{app\.setBaseConnection\}/);
   assert.equal(baseConnectionView(true, null).tone, 'warning');
   assert.equal(baseConnectionView(true, 'connected').tone, 'success');
-  assert.match(panel, /Il token Base\.com viene letto dalla configurazione locale/);
+  assert.match(panel, /<BaseTokenControl onConnectionChanged=\{onConnectionChanged\}/);
   assert.doesNotMatch(panel, /BASE_API_TOKEN|type="password"/);
 });
 

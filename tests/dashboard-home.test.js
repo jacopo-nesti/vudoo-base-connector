@@ -79,13 +79,22 @@ test('recenti: solo cataloghi caricati, data discendente, nome come fallback e l
   assert.equal(rows[0].name, 'Zeta');
 });
 
-test('Guida è accessibile dalla sidebar e offre le due sezioni richieste', () => {
+test('Guida operativa presenta quattro sezioni, sei passi e contenuti reali', () => {
   const shell = source('../renderer/src/components/AppShell.jsx');
   const presentation = source('../renderer/src/AppPresentation.jsx');
   const page = source('../renderer/src/pages/HelpPage.jsx');
+  const css = source('../renderer/src/index.css');
   assert.match(shell, /page: 'system-help', label: 'Guida'/);
   assert.match(presentation, /page === 'system-help' && <HelpPage/);
-  assert.match(page, /Guida operativa/);
-  assert.match(page, /Documentazione tecnica/);
-  assert.match(page, /Documentazione tecnica completa in preparazione/);
+  assert.match(page, /useState\('start'\)/);
+  for (const title of ['Inizia da qui', 'Funzioni', 'Impostazioni', 'Problemi comuni']) assert.match(page, new RegExp(title));
+  assert.equal((page.match(/\['(?:search|upload|list|edit|check)', '(?:Cerca un produttore|Carica il catalogo|Controlla i prodotti|Modifica e salva|Importa su Base.com|Verifica il risultato)'/g) || []).length, 6);
+  for (const title of ['Produttori', 'Prodotti', 'Operazioni', 'Categorie', 'Ordini', 'Diagnostica']) assert.match(page, new RegExp(`'${title}'`));
+  assert.match(page, /Se Base\.com non riceve alcuni dati dell’acquirente dal marketplace/);
+  for (const name of ['Limite prodotti Vudoo', 'Timeout caricamento catalogo', 'Limite di prova', 'Stock automatico massimo', 'Richieste Base.com al minuto', 'Avanzate']) assert.match(page, new RegExp(name));
+  for (const title of ['Il catalogo non si carica', 'Base.com non risponde', 'L’importazione non procede']) assert.match(page, new RegExp(title));
+  assert.match(page, /aria-expanded=\{open === index\}/);
+  assert.match(css, /\.help-start-grid/);
+  assert.match(css, /@media \(max-width: 600px\)/);
+  assert.doesNotMatch(page, /Documentazione tecnica|payload|resolver|IPC|canonical|JSON|runtime|preflight remoto/);
 });

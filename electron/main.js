@@ -3,6 +3,7 @@ import path from "node:path";
 import { createRequire } from 'node:module';
 import { fileURLToPath } from "node:url";
 import { loadLocalEnvironment, resolveEnvironmentFile } from './localEnv.js';
+import { saveBaseToken, deleteBaseToken } from './baseTokenFile.js';
 import { preparePackagedConfiguration } from './packagedConfiguration.js';
 import {
   SETTINGS_FILE_NAME, applySettingsToEnvironment, getEffectiveSettings,
@@ -10,6 +11,7 @@ import {
 } from "./settingsManager.js";
 import { createWriteGuard } from "./writeGuard.js";
 import { attachWindowChrome, registerWindowIpc } from './windowChrome.js';
+import { attachTextContextMenu } from './textContextMenu.js';
 import {
   PRODUCT_OVERRIDES_FILE_NAME, loadProductOverrides, writeProductOverrides,
   saveProductOverride, saveProductFieldPatch, saveBulkProductField, saveBulkProductTags,
@@ -91,7 +93,8 @@ async function bootstrap() {
 
   const { BULK_LOOKUP_THRESHOLD } = await import("../src/importer.js");
   const { BASE_PRODUCT_DETAILS_CHUNK_SIZE } = await import("../src/baseApi.js");
-  const { callBase, findProductInBase, getBaseProductDetails, getBaseConnectionState } = await import('../src/baseApi.js');
+  const { callBase, findProductInBase, getBaseProductDetails, getBaseConnectionState,
+    resetBaseConnectionVerification } = await import('../src/baseApi.js');
   const { readBaseOrder, classifyOrderError } = await import('../src/orders/baseOrderReader.js');
   const { syncOrders } = await import('../src/orders/orderSync.js');
   const { createInventoryTagService } = await import('../src/inventoryTags.js');
@@ -255,6 +258,7 @@ async function bootstrap() {
     window.once('ready-to-show', () => window.show());
 
     attachWindowChrome(window, app);
+    attachTextContextMenu(window, Menu);
 
     if (app.isPackaged) {
       window.loadFile(path.join(__dirname, "../renderer/dist/index.html"));
@@ -326,6 +330,32 @@ async function bootstrap() {
       return { ok: true, inventoryStatus: await ensureActiveInventory(manufacturer) };
     });
     ipcMain.handle("settings:get", () => settingsResponse());
+    ipcMain.handle('base-token:status', () => ({ configured: Boolean(baseConfig.token) }));
+    ipcMain.handle('base-token:set', async (_event, newToken) => {
+      if (writeGuard.isBusy()) return { ok: false, code: 'importInProgress' };
+      try {
+        return await writeGuard.run(async () => {
+          const result = await saveBaseToken(environmentFile, newToken);
+          if (!result.ok) return result;
+          process.env.BASE_API_TOKEN = newToken.trim();
+          baseConfig.refreshBaseToken();
+          resetBaseConnectionVerification();
+          return result;
+        });
+      } catch { return { ok: false, code: 'storageError' }; }
+    });
+    ipcMain.handle('base-token:delete', async () => {
+      if (writeGuard.isBusy()) return { ok: false, code: 'importInProgress' };
+      try {
+        return await writeGuard.run(async () => {
+          const result = await deleteBaseToken(environmentFile);
+          delete process.env.BASE_API_TOKEN;
+          baseConfig.refreshBaseToken();
+          resetBaseConnectionVerification();
+          return result;
+        });
+      } catch { return { ok: false, code: 'storageError' }; }
+    });
     ipcMain.handle('app:local-info', () => ({ appName: 'Vudoo Product Manager', version: app.isPackaged ? app.getVersion() : packageVersion, dataPath: app.getPath('userData') }));
     ipcMain.handle('app:copy-data-path', () => { clipboard.writeText(app.getPath('userData')); return { ok: true }; });
     ipcMain.handle('app:open-data-folder', async () => {
