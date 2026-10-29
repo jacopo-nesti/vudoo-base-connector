@@ -6,7 +6,6 @@ import path from 'node:path';
 import { resolveProductValue, effectiveProduct, productKey } from '../electron/effectiveProduct.js';
 import { saveBulkProductField, saveProductFieldPatch, productOverrideRevision, loadProductOverrides } from '../electron/productOverrides.js';
 import { baseLocalPreflight, basePayloadPreview, assertBaseLocalSendable } from '../src/marketplaces/base/localPreview.js';
-import { summarizeProductPreflights } from '../src/marketplaces/diagnostics.js';
 import { filterCatalogProducts } from '../renderer/src/catalogFilters.js';
 import { parseCatalog } from '../src/converter.js';
 import { validateCategoryMappings } from '../src/categoryNormalizer.js';
@@ -96,7 +95,6 @@ test('Preflight Base: warning non blocca, diagnosi strutturata e blocker vieta i
   assert.equal(uncategorized.checks.find(item => item.code === 'category').status, 'WARNING');
   assert.doesNotThrow(() => assertBaseLocalSendable([{ id: 'SKU-1', basePreflight: uncategorized }], ['SKU-1']));
   assert.doesNotThrow(() => assertBaseLocalSendable([{ id: 'SKU-1', basePreflight: ready }], ['SKU-1']));
-  assert.deepEqual(summarizeProductPreflights([ready, uncategorized]).statuses, { BASE_READY: 2 });
 });
 
 test('Anteprima Base distingue campi vuoti e non supportati, senza simulare ID remoti', () => {

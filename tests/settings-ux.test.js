@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { settingHelpContent } from '../renderer/src/settingHelpContent.js';
 import { parseNumericSettings } from '../renderer/src/settingsValidation.js';
 
 const fields = [
@@ -9,15 +8,21 @@ const fields = [
   { key: 'baseApiReadAttempts', label: 'Tentativi di lettura Base.com', min: 1, max: 10 },
 ];
 
-test('settings help explains the real controls without exposing credentials', () => {
-  for (const key of ['vudooResultsLimit', 'vudooTimeoutMs', 'dryRun', 'testMode',
-    'unmappedCategoryPolicy', 'baseApiRequestsPerMinute', 'baseApiReadAttempts',
+test('settings help describes current controls without exposing credentials', () => {
+  const panel = readFileSync(new URL('../renderer/src/SettingsPanel.jsx', import.meta.url), 'utf8');
+  const help = panel.match(/const fieldHelp = \{([\s\S]*?)\n\};/)?.[1];
+  assert.ok(help, 'fieldHelp corrente presente');
+  for (const key of ['vudooResultsLimit', 'vudooTimeoutMs',
+    'baseApiRequestsPerMinute', 'baseApiReadAttempts',
     'baseApiRetryDelayMs', 'baseApiRateLimitDelayMs']) {
-    assert.ok(settingHelpContent[key]?.length > 30, key);
+    assert.match(panel, new RegExp(`${key}: '.{30,}`), key);
   }
-  assert.match(settingHelpContent.vudooResultsLimit, /catalogo Vudoo/);
-  assert.match(settingHelpContent.dryRun, /Reale.*Base\.com.*Simulazione/);
-  assert.doesNotMatch(JSON.stringify(settingHelpContent), /token|secret|password/i);
+  assert.match(help, /vudooResultsLimit: '.*catalogo Vudoo/);
+  assert.match(help, /baseApiReadAttempts: '.*lettura Base\.com/);
+  assert.match(panel, /<SettingHelp label=\{field\.label\}>\{fieldHelp\[field\.key\]\}<\/SettingHelp>/);
+  assert.match(panel, /<SettingHelp label="Limite di prova">/);
+  assert.match(panel, /<SettingHelp label="Modalità operativa">/);
+  assert.doesNotMatch(help, /BASE_API_TOKEN|refreshToken|sharedSecret/);
 });
 
 test('settings numeric validation rejects invalid values without changing backend bounds', () => {

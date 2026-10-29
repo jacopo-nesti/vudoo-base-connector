@@ -11,18 +11,3 @@ export function summarizeDiagnostics(items) {
   for (const item of items) counts[item.status]++;
   return { counts, canSend: counts.BLOCKING === 0 };
 }
-
-export function summarizeProductPreflights(rows) {
-  const statuses = {};
-  let ready = 0;
-  let blocked = 0;
-  let warnings = 0;
-  for (const row of rows) {
-    statuses[row.status] = (statuses[row.status] ?? 0) + 1;
-    if (row.canSend) ready++;
-    else blocked++;
-    warnings += row.counts?.WARNING ?? 0;
-  }
-  return { total: rows.length, ready, blocked, warnings, statuses };
-}
-
