@@ -246,6 +246,7 @@ async function bootstrap() {
       frame: false,
       show: false,
       backgroundColor: '#f6f8fc',
+      icon: app.isPackaged ? path.join(process.resourcesPath, 'icon.ico') : path.join(__dirname, '../build/icon.ico'),
 
       webPreferences: {
         preload: path.join(__dirname, "preload.cjs"),

@@ -7,6 +7,21 @@ import { fileURLToPath } from 'node:url';
 import { loadLocalEnvironment, resolveEnvironmentFile } from '../electron/localEnv.js';
 import { preparePackagedConfiguration } from '../electron/packagedConfiguration.js';
 
+test('Windows portable uses the approved multiresolution icon in EXE and BrowserWindow', async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const icon = await readFile(path.join(root, 'build/icon.ico'));
+  assert.equal(icon.readUInt16LE(0), 0);
+  assert.equal(icon.readUInt16LE(2), 1);
+  const count = icon.readUInt16LE(4);
+  const sizes = Array.from({ length: count }, (_, index) => icon[6 + index * 16] || 256);
+  assert.deepEqual(sizes, [16, 24, 32, 48, 64, 128, 256]);
+  const config = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(config.build.win.icon, 'build/icon.ico');
+  assert.ok(config.build.extraResources.some(resource => resource.from === 'build/icon.ico' && resource.to === 'icon.ico'));
+  const main = await readFile(path.join(root, 'electron/main.js'), 'utf8');
+  assert.match(main, /app\.isPackaged \? path\.join\(process\.resourcesPath, 'icon\.ico'\) : path\.join\(__dirname, '\.\.\/build\/icon\.ico'\)/);
+});
+
 test('portable configuration seeds only absent mapping files and keeps local changes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'vudoo-portable-'));
   try {

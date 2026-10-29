@@ -49,10 +49,12 @@
       "!**/*.test.*"
     ],
     "extraResources": [
+      { "from": "build/icon.ico", "to": "icon.ico" },
       { "from": "config/canonical-categories.json", "to": "config-defaults/canonical-categories.json" },
       { "from": "config/suppliers", "to": "config-defaults/suppliers", "filter": ["*.json"] }
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [{ "target": "portable", "arch": ["x64"] }],
       "artifactName": "Vudoo-Base-Connector-${version}-portable-${arch}.${ext}"
     }
