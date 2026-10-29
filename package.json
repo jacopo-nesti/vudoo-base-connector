@@ -55,8 +55,17 @@
     ],
     "win": {
       "icon": "build/icon.ico",
-      "target": [{ "target": "portable", "arch": ["x64"] }],
-      "artifactName": "Vudoo-Base-Connector-${version}-portable-${arch}.${ext}"
-    }
+      "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vudoo Product Manager",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Vudoo Product Manager Setup ${version}.${ext}"
+    },
+    "portable": { "artifactName": "Vudoo-Base-Connector-${version}-portable-${arch}.${ext}" }
   }
 }

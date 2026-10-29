@@ -22,6 +22,22 @@ test('Windows portable uses the approved multiresolution icon in EXE and Browser
   assert.match(main, /app\.isPackaged \? path\.join\(process\.resourcesPath, 'icon\.ico'\) : path\.join\(__dirname, '\.\.\/build\/icon\.ico'\)/);
 });
 
+test('Windows distribution keeps portable and adds assisted NSIS without deleting user data', async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const config = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).build;
+  assert.deepEqual(config.win.target, [{ target: 'nsis', arch: ['x64'] }, { target: 'portable', arch: ['x64'] }]);
+  assert.equal(config.nsis.oneClick, false);
+  assert.equal(config.nsis.allowToChangeInstallationDirectory, true);
+  assert.equal(config.nsis.createDesktopShortcut, true);
+  assert.equal(config.nsis.createStartMenuShortcut, true);
+  assert.equal(config.nsis.shortcutName, 'Vudoo Product Manager');
+  assert.equal(config.nsis.deleteAppDataOnUninstall, false);
+  assert.equal(config.nsis.artifactName, 'Vudoo Product Manager Setup ${version}.${ext}');
+  assert.equal(config.portable.artifactName, 'Vudoo-Base-Connector-${version}-portable-${arch}.${ext}');
+  const script = await readFile(path.join(root, 'tools/package-portable.mjs'), 'utf8');
+  assert.match(script, /'--win', 'nsis', 'portable', '--x64'/);
+});
+
 test('portable configuration seeds only absent mapping files and keeps local changes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'vudoo-portable-'));
   try {
@@ -55,15 +71,19 @@ test('portable .env lives next to the original executable and loads before Base 
   const previous = process.env.BASE_API_TOKEN;
   try {
     const portableDir = path.join(root, 'Ian');
+    const userDataDir = path.join(root, 'userData');
     await mkdir(portableDir);
     const envFile = resolveEnvironmentFile({ packaged: true, projectRoot: 'unused',
-      executableDir: portableDir, executablePath: path.join(root, 'extracted', 'app.exe') });
+      executableDir: portableDir, userDataDir });
     assert.equal(envFile, path.join(portableDir, '.env'));
+    assert.equal(resolveEnvironmentFile({ packaged: true, projectRoot: 'unused', userDataDir }), path.join(userDataDir, '.env'));
     await writeFile(envFile, 'BASE_API_TOKEN=packaging-test-placeholder\n');
     delete process.env.BASE_API_TOKEN;
     assert.equal(loadLocalEnvironment(envFile, { optional: true }), true);
     assert.equal(process.env.BASE_API_TOKEN, 'packaging-test-placeholder');
     assert.equal(resolveEnvironmentFile({ packaged: false, projectRoot: root }), path.join(root, '.env'));
+    const main = await readFile(path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'electron/main.js'), 'utf8');
+    assert.ok(main.indexOf('loadLocalEnvironment(environmentFile') < main.indexOf('await import("../src/config.js")'));
   } finally {
     if (previous === undefined) delete process.env.BASE_API_TOKEN;
     else process.env.BASE_API_TOKEN = previous;

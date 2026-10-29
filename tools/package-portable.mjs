@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
 const staging = await mkdtemp(path.join(os.tmpdir(), 'vudoo-portable-build-'));
 const output = path.join(staging, 'output');
-const artifact = `Vudoo-Base-Connector-${version}-portable-x64.exe`;
+const artifacts = [`Vudoo Product Manager Setup ${version}.exe`, `Vudoo-Base-Connector-${version}-portable-x64.exe`];
 const result = spawnSync(process.execPath, [
-  require.resolve('electron-builder/cli.js'), '--win', 'portable', '--x64',
+  require.resolve('electron-builder/cli.js'), '--win', 'nsis', 'portable', '--x64',
   `--config.directories.output=${output}`,
 ], {
   cwd: root,
@@ -27,7 +27,7 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 
 const release = path.join(root, 'release');
 await mkdir(release, { recursive: true });
-await copyFile(path.join(output, artifact), path.join(release, artifact));
+for (const artifact of artifacts) await copyFile(path.join(output, artifact), path.join(release, artifact));
 await copyFile(path.join(root, 'packaging', 'portable.env.example'), path.join(release, '.env.example'));
 await rm(staging, { recursive: true, force: true });
-console.log(`Portable pronta: ${path.join(release, artifact)}`);
+for (const artifact of artifacts) console.log(`Windows pronta: ${path.join(release, artifact)}`);

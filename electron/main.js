@@ -41,7 +41,7 @@ async function bootstrap() {
     packaged: app.isPackaged,
     projectRoot: path.join(__dirname, '..'),
     executableDir: process.env.PORTABLE_EXECUTABLE_DIR,
-    executablePath: process.execPath,
+    userDataDir: userDataPath,
   });
   loadLocalEnvironment(environmentFile, { optional: app.isPackaged });
   if (app.isPackaged) {

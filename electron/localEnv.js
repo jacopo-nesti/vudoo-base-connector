@@ -3,10 +3,9 @@ import { loadEnvFile } from 'node:process';
 import { parseEnv } from 'node:util';
 import path from 'node:path';
 
-export function resolveEnvironmentFile({ packaged, projectRoot, executableDir, executablePath }) {
-  return packaged
-    ? path.join(executableDir || path.dirname(executablePath), '.env')
-    : path.join(projectRoot, '.env');
+export function resolveEnvironmentFile({ packaged, projectRoot, executableDir, userDataDir }) {
+  if (!packaged) return path.join(projectRoot, '.env');
+  return path.join(executableDir || userDataDir, '.env');
 }
 
 export function loadLocalEnvironment(file, { optional = false } = {}) {
